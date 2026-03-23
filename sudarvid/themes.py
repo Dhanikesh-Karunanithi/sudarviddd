@@ -208,5 +208,14 @@ def get_theme(theme_id: str) -> ThemeSpec:
 
 
 def list_themes() -> List[dict]:
-    return [{"id": k, "label": v.label} for k, v in THEMES.items()]
+    return [
+        {
+            "id": k,
+            "label": v.label,
+            "bg": v.bg_color,
+            "accent": v.accent_color,
+            "secondary": v.secondary_accent,
+        }
+        for k, v in THEMES.items()
+    ]
 

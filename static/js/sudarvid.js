@@ -113,6 +113,7 @@
     const btnNext = document.getElementById("sudarvid-btn-next");
     const scrub = document.getElementById("sudarvid-scrub");
     const timeLabel = document.getElementById("sudarvid-time");
+    const hint = document.getElementById("sudarvid-hint");
 
     if (!ui || !btnPrev || !btnPlay || !btnNext || !scrub || !timeLabel) {
       startCapturePlayback();
@@ -125,6 +126,24 @@
     let useAudioClock = false;
     let rafId = null;
     let scrubbing = false;
+    let audioBlocked = false;
+
+    if (audio) {
+      audio.preload = "auto";
+      audio.muted = false;
+      audio.volume = 1;
+      audio.addEventListener("error", () => {
+        if (hint) {
+          hint.textContent = "Audio failed to load. Check that audio/voiceover.mp3 is reachable.";
+        }
+      });
+      audio.addEventListener("playing", () => {
+        audioBlocked = false;
+        if (hint) {
+          hint.textContent = "Space: play/pause · ← →: slides · Home/End: start/end";
+        }
+      });
+    }
 
     function formatTime(sec) {
       const s = Math.floor(Math.max(0, sec));
@@ -208,25 +227,38 @@
       btnPlay.setAttribute("aria-label", paused ? "Play" : "Pause");
     }
 
+    function tryPlayAudioAt(seconds) {
+      if (!audio) {
+        return;
+      }
+      try {
+        audio.currentTime = seconds;
+        audio.muted = false;
+        audio.volume = 1;
+      } catch (e) {}
+      const p = audio.play();
+      if (p && typeof p.then === "function") {
+        p.catch(() => {
+          useAudioClock = false;
+          audioBlocked = true;
+          if (hint) {
+            hint.textContent = "Audio blocked by browser. Click Play again after interacting with the page.";
+          }
+        });
+      }
+    }
+
     function play() {
       paused = false;
       playStartPerf = performance.now();
       useAudioClock = false;
 
       if (audio) {
-        try {
-          audio.currentTime = timeAtPause;
-        } catch (e) {}
         const onPlaying = () => {
           useAudioClock = true;
         };
         audio.addEventListener("playing", onPlaying, { once: true });
-        const p = audio.play();
-        if (p && typeof p.then === "function") {
-          p.catch(() => {
-            useAudioClock = false;
-          });
-        }
+        tryPlayAudioAt(timeAtPause);
       }
 
       syncPlayButton();
@@ -372,21 +404,13 @@
     playStartPerf = performance.now();
     useAudioClock = false;
     if (audio) {
-      try {
-        audio.currentTime = 0;
-      } catch (e) {}
       const onPlaying = () => {
         useAudioClock = true;
       };
       audio.addEventListener("playing", onPlaying, { once: true });
-      const p = audio.play();
-      if (p && typeof p.then === "function") {
-        p.catch(() => {
-          paused = true;
-          useAudioClock = false;
-          syncPlayButton();
-          setScrubVisual(0);
-        });
+      tryPlayAudioAt(0);
+      if (audioBlocked) {
+        paused = true;
       }
     }
     if (!paused) {

@@ -49,6 +49,8 @@ class SlideContent:
     duration_seconds: float = 5.0
     # Layout / learning UX (see content_planner JSON schema)
     layout_kind: str = "standard"
+    # LLM-selected frame: where the generated image appears (HTML templates).
+    visual_template: str = "full_bleed_bg"
     subtitle: Optional[str] = None
     learning_point: Optional[str] = None
     big_stat: Optional[str] = None
@@ -70,4 +72,9 @@ class GenerationConfig:
     output_mp4: bool
     target_duration_seconds: Optional[float] = None
     custom_content: Optional[str] = None
+    # Pedagogy / curriculum context (optional; used by ByteOS and CLI)
+    learning_objectives: Optional[str] = None
+    difficulty: Optional[str] = None
+    source_notes: Optional[str] = None
+    constraints: Optional[str] = None
 

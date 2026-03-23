@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import jinja2
 import yaml
@@ -50,6 +51,10 @@ def load_config(path: str) -> GenerationConfig:
         output_mp4=bool(data.get("output_mp4", False)),
         target_duration_seconds=data.get("target_duration_seconds"),
         custom_content=data.get("custom_content"),
+        learning_objectives=data.get("learning_objectives"),
+        difficulty=data.get("difficulty"),
+        source_notes=data.get("source_notes"),
+        constraints=data.get("constraints"),
     )
 
 
@@ -103,6 +108,24 @@ def render_html_deck(
     return output_path
 
 
+def write_slides_manifest(output_dir: str, slides: List[SlideContent]) -> str:
+    """JSON summary for API/clients: layout and visual_template per slide."""
+    path = os.path.join(output_dir, "slides_manifest.json")
+    payload = [
+        {
+            "index": s.index,
+            "title": s.title,
+            "layout_kind": s.layout_kind,
+            "visual_template": getattr(s, "visual_template", "full_bleed_bg"),
+            "duration_seconds": s.duration_seconds,
+        }
+        for s in slides
+    ]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    return path
+
+
 def _relpath_posix(path: str, base_dir: str) -> str:
     return Path(path).resolve().relative_to(Path(base_dir).resolve()).as_posix()
 
@@ -111,8 +134,10 @@ def generate_video(
     config_path: Optional[str] = None,
     output_dir: str = "output",
     config_obj: Optional[GenerationConfig] = None,
+    progress_callback: Optional[Callable[[str, dict], None]] = None,
 ) -> List[str]:
     config = config_obj if config_obj is not None else load_config(config_path or "")
+    report = progress_callback or (lambda *_args, **_kwargs: None)
 
     together_api_key = os.environ.get("TOGETHER_API_KEY")
     if not together_api_key:
@@ -121,11 +146,20 @@ def generate_video(
     os.makedirs(output_dir, exist_ok=True)
 
     planner = ContentPlanner(api_key=together_api_key)
+    report("planning", {"message": "Planning slides"})
     slides = planner.plan_slides(config)
 
     images_dir = os.path.join(output_dir, "assets", "images")
     image_gen = ImageGenerator(api_key=together_api_key, output_dir=images_dir)
-    slides = image_gen.generate_for_slides(config, slides)
+    report("images_start", {"message": "Generating images", "total": len(slides)})
+    slides = image_gen.generate_for_slides(
+        config,
+        slides,
+        progress_callback=lambda current, total: report(
+            "image_progress",
+            {"current": current, "total": total, "message": f"image_{current}_of_{total}"},
+        ),
+    )
 
     for s in slides:
         if s.image_path:
@@ -135,6 +169,7 @@ def generate_video(
     # before rendering `slides.html`. This also allows HTML-only runs when ffmpeg/ffprobe
     # are missing (duration estimation uses a fallback when ffprobe fails).
     if config.output_html and config.include_tts:
+        report("audio", {"message": "Generating voiceover"})
         audio_dir = os.path.join(output_dir, "audio")
         per_slide_tts = asyncio.run(synthesize_all_slides(slides, audio_dir, config.language))
         voiceover_path = os.path.join(audio_dir, "voiceover.mp3")
@@ -151,13 +186,20 @@ def generate_video(
 
     html_path: Optional[str] = None
     if config.output_html:
+        report("rendering", {"message": "Rendering HTML deck"})
         html_path = render_html_deck(config, slides, output_dir=output_dir)
         output_files.append(html_path)
+        manifest_path = write_slides_manifest(output_dir, slides)
+        output_files.append(manifest_path)
 
     if config.output_mp4:
         if not html_path:
+            report("rendering", {"message": "Rendering HTML deck"})
             html_path = render_html_deck(config, slides, output_dir=output_dir)
             output_files.append(html_path)
+            manifest_path = write_slides_manifest(output_dir, slides)
+            output_files.append(manifest_path)
+        report("rendering_video", {"message": "Rendering MP4"})
         mp4_path = build_full_video(config, slides, html_path=html_path, output_dir=output_dir)
         output_files.append(mp4_path)
 

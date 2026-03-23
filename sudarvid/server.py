@@ -4,18 +4,24 @@ import asyncio
 import json
 import os
 import shutil
+import sqlite3
+import subprocess
+import sys
 import time
 import uuid
-from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
+from sse_starlette.sse import EventSourceResponse
 
 from .core import generate_video
+from .naming import allocate_job_folder_name
 from .themes import list_themes
 from .types import AnimationLevel, GenerationConfig, ThemeId, VideoSize
 
@@ -66,9 +72,55 @@ def _debug_log(
         pass
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+FRONTEND_DIR = REPO_ROOT / "frontend"
+DB_PATH = REPO_ROOT / "sudarvid.db"
+
+
+job_events: Dict[str, asyncio.Queue] = {}
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _db_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_db() -> None:
+    with _db_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS jobs (
+                id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                output_dir TEXT NOT NULL,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS output_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                FOREIGN KEY (job_id) REFERENCES jobs(id)
+            )
+            """
+        )
+        conn.commit()
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
     os.makedirs("output", exist_ok=True)
+    _init_db()
     ffmpeg_exists = bool(shutil.which("ffmpeg"))
     ffprobe_exists = bool(shutil.which("ffprobe"))
     _debug_log(
@@ -83,16 +135,58 @@ async def startup_event() -> None:
         print("[SudarVid] WARNING: ffprobe not found in PATH. Audio duration detection may fail.")
 
 
-@dataclass
-class JobState:
-    id: str
-    status: str  # queued | running | done | error
-    output_dir: str
-    output_files: List[str] = field(default_factory=list)
-    error: Optional[str] = None
+def _create_job(job_id: str, output_dir: str) -> None:
+    now = _utc_now_iso()
+    with _db_conn() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, status, output_dir, error, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?)",
+            (job_id, "queued", output_dir, now, now),
+        )
+        conn.commit()
 
 
-jobs: Dict[str, JobState] = {}
+def _set_job_status(job_id: str, status: str, error: Optional[str] = None) -> None:
+    with _db_conn() as conn:
+        conn.execute(
+            "UPDATE jobs SET status = ?, error = ?, updated_at = ? WHERE id = ?",
+            (status, error, _utc_now_iso(), job_id),
+        )
+        conn.commit()
+
+
+def _set_output_files(job_id: str, files: List[str]) -> None:
+    with _db_conn() as conn:
+        conn.execute("DELETE FROM output_files WHERE job_id = ?", (job_id,))
+        for fp in files:
+            conn.execute(
+                "INSERT INTO output_files (job_id, file_path) VALUES (?, ?)",
+                (job_id, fp),
+            )
+        conn.execute("UPDATE jobs SET updated_at = ? WHERE id = ?", (_utc_now_iso(), job_id))
+        conn.commit()
+
+
+def _get_job(job_id: str) -> Optional[dict]:
+    with _db_conn() as conn:
+        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if not row:
+            return None
+        files_rows = conn.execute(
+            "SELECT file_path FROM output_files WHERE job_id = ? ORDER BY id ASC",
+            (job_id,),
+        ).fetchall()
+    return {
+        "job_id": row["id"],
+        "status": row["status"],
+        "output_dir": row["output_dir"],
+        "output_files": [r["file_path"] for r in files_rows],
+        "error": row["error"],
+    }
+
+
+async def _emit_progress(job_id: str, event: str, data: dict) -> None:
+    queue = job_events.setdefault(job_id, asyncio.Queue())
+    await queue.put({"event": event, "data": data})
 
 
 def _collect_output_files(output_dir: str) -> List[str]:
@@ -110,6 +204,9 @@ def _collect_output_files(output_dir: str) -> List[str]:
         if rel_posix == "slides.html":
             found.append(rel_posix)
             continue
+        if rel_posix == "slides_manifest.json":
+            found.append(rel_posix)
+            continue
         if rel_posix in ("video/output.mp4", "audio/voiceover.mp3", "audio/music.mp3"):
             found.append(rel_posix)
             continue
@@ -117,9 +214,36 @@ def _collect_output_files(output_dir: str) -> List[str]:
     return sorted(set(found))
 
 
+def _try_open_slides_html(output_dir: str) -> None:
+    # Set SUDARVID_OPEN_SLIDES=1 to open slides.html in the default app after a successful job.
+    flag = os.environ.get("SUDARVID_OPEN_SLIDES", "").strip().lower()
+    if flag not in ("1", "true", "yes"):
+        return
+    path = Path(output_dir).resolve() / "slides.html"
+    if not path.is_file():
+        return
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(path)], check=False, capture_output=True)
+        else:
+            opener = shutil.which("xdg-open")
+            if opener:
+                subprocess.run([opener, str(path)], check=False, capture_output=True)
+    except Exception as e:
+        print(f"[SudarVid] Could not open slides.html: {e}")
+
+
 async def _run_job(job_id: str, config: GenerationConfig) -> None:
-    job = jobs[job_id]
-    job.status = "running"
+    loop = asyncio.get_running_loop()
+    queue = job_events.setdefault(job_id, asyncio.Queue())
+
+    def _progress_from_thread(event: str, payload: dict) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, {"event": event, "data": payload})
+
+    _set_job_status(job_id, "running")
+    await _emit_progress(job_id, "status", {"status": "running", "step": "planning"})
     try:
         _debug_log(
             hypothesis_id="H2_model_not_available",
@@ -130,14 +254,18 @@ async def _run_job(job_id: str, config: GenerationConfig) -> None:
         await asyncio.to_thread(
             generate_video,
             config_path=None,
-            output_dir=job.output_dir,
+            output_dir=os.path.join("output", job_id),
             config_obj=config,
+            progress_callback=_progress_from_thread,
         )
-        job.output_files = _collect_output_files(job.output_dir)
-        job.status = "done"
+        output_files = _collect_output_files(os.path.join("output", job_id))
+        _set_output_files(job_id, output_files)
+        _set_job_status(job_id, "done")
+        await _emit_progress(job_id, "status", {"status": "done", "step": "done"})
+        await asyncio.to_thread(_try_open_slides_html, os.path.join("output", job_id))
     except Exception as e:
-        job.error = str(e)
-        job.status = "error"
+        _set_job_status(job_id, "error", str(e))
+        await _emit_progress(job_id, "status", {"status": "error", "error": str(e)})
         print(f"[SudarVid] Job {job_id} failed: {e}")
         _debug_log(
             hypothesis_id="H2_model_not_available",
@@ -165,6 +293,26 @@ class GenerateRequest(BaseModel):
     output_html: bool = True
     output_mp4: bool = True
     custom_content: Optional[str] = None
+    learning_objectives: Optional[str] = Field(
+        None,
+        description="What learners should gain (bullets or short paragraph).",
+        max_length=8000,
+    )
+    difficulty: Optional[str] = Field(
+        None,
+        description="e.g. beginner, intermediate, advanced.",
+        max_length=120,
+    )
+    source_notes: Optional[str] = Field(
+        None,
+        description="Curriculum excerpt, outline, or facts the deck must align with.",
+        max_length=16000,
+    )
+    constraints: Optional[str] = Field(
+        None,
+        description="What to include, avoid, or terminology limits.",
+        max_length=8000,
+    )
 
     @field_validator("theme")
     @classmethod
@@ -196,6 +344,10 @@ class GenerateRequest(BaseModel):
             output_html=self.output_html,
             output_mp4=self.output_mp4,
             custom_content=self.custom_content,
+            learning_objectives=self.learning_objectives,
+            difficulty=self.difficulty,
+            source_notes=self.source_notes,
+            constraints=self.constraints,
         )
 
 
@@ -217,12 +369,12 @@ async def get_sizes() -> list:
 
 @app.post("/generate", summary="Start a video generation job")
 async def generate(request: GenerateRequest, background_tasks: BackgroundTasks) -> dict:
-    job_id = str(uuid.uuid4())
+    job_id = allocate_job_folder_name(request.topic, "output")
     output_dir = os.path.join("output", job_id)
     os.makedirs(output_dir, exist_ok=True)
 
     config = request.to_generation_config()
-    jobs[job_id] = JobState(id=job_id, status="queued", output_dir=output_dir)
+    _create_job(job_id, output_dir)
     _debug_log(
         hypothesis_id="H1_jobid_polling_format",
         location="server.py:generate",
@@ -244,7 +396,7 @@ async def generate(request: GenerateRequest, background_tasks: BackgroundTasks) 
 
 @app.get("/status/{job_id}", summary="Check job status")
 async def get_status(job_id: str) -> dict:
-    job = jobs.get(job_id)
+    job = _get_job(job_id)
     if not job:
         _debug_log(
             hypothesis_id="H1_jobid_polling_format",
@@ -254,11 +406,66 @@ async def get_status(job_id: str) -> dict:
         )
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return {
-        "job_id": job.id,
-        "status": job.status,
-        "output_files": job.output_files,
-        "error": job.error,
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "output_files": job["output_files"],
+        "error": job["error"],
     }
+
+
+@app.get("/api/jobs/{job_id}/slides", summary="Slide manifest (layout + visual_template per slide)")
+async def get_job_slides_manifest(job_id: str) -> List[dict]:
+    job = _get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+    path = Path(job["output_dir"]).resolve() / "slides_manifest.json"
+    if not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="slides_manifest.json not found (job may still be running or was created before this feature).",
+        )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@app.get("/stream/{job_id}", summary="Stream job progress updates")
+async def stream_status(job_id: str) -> EventSourceResponse:
+    if not _get_job(job_id):
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+
+    queue = job_events.setdefault(job_id, asyncio.Queue())
+
+    async def event_generator():
+        last_status = None
+        while True:
+            job = _get_job(job_id)
+            if not job:
+                yield {"event": "status", "data": json.dumps({"status": "missing"})}
+                break
+
+            if job["status"] != last_status:
+                last_status = job["status"]
+                yield {
+                    "event": "status",
+                    "data": json.dumps(
+                        {
+                            "job_id": job_id,
+                            "status": job["status"],
+                            "error": job["error"],
+                            "output_files": job["output_files"],
+                        }
+                    ),
+                }
+
+            try:
+                queued = await asyncio.wait_for(queue.get(), timeout=1.5)
+                yield {"event": queued["event"], "data": json.dumps(queued["data"])}
+            except asyncio.TimeoutError:
+                yield {"event": "heartbeat", "data": json.dumps({"ts": time.time()})}
+
+            if job["status"] in ("done", "error"):
+                break
+
+    return EventSourceResponse(event_generator())
 
 
 MIME_MAP = {
@@ -279,12 +486,12 @@ MIME_MAP = {
 
 @app.get("/download/{job_id}/{filename:path}", summary="Download an output file")
 async def download_file(job_id: str, filename: str) -> FileResponse:
-    job = jobs.get(job_id)
+    job = _get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
 
-    base = Path(job.output_dir).resolve()
-    file_path = (Path(job.output_dir) / filename).resolve()
+    base = Path(job["output_dir"]).resolve()
+    file_path = (Path(job["output_dir"]) / filename).resolve()
     if base not in file_path.parents and file_path != base:
         raise HTTPException(status_code=404, detail="File not found.")
 
@@ -332,285 +539,6 @@ async def render_job_file(job_id: str, filename: str) -> FileResponse:
     )
 
 
-@app.get("/design-previews", summary="Static previews of slide layouts (no generation)")
-async def design_previews() -> HTMLResponse:
-    return HTMLResponse(
-        """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SudarVid — layout previews</title>
-  <style>
-    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 24px;
-      background: #0f1115; color: #eaeef5; }
-    h1 { margin: 0 0 8px; font-size: 1.35rem; }
-    p.lead { opacity: 0.85; font-size: 14px; max-width: 52rem; margin-bottom: 20px; }
-    a { color: #93c5fd; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
-    .card { background: #161a22; border: 1px solid #2a3140; border-radius: 12px; padding: 14px; }
-    .card h2 { margin: 0 0 10px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: #93c5fd; }
-    .stage { width: 100%; aspect-ratio: 16 / 9; background: #0b0d12; border-radius: 8px; overflow: hidden;
-      position: relative; font-size: 7px; }
-    .mini { position: absolute; inset: 0; padding: 14px 16px; color: #f1f5f9; font-family: Georgia, serif; }
-    .accent { color: #38bdf8; }
-    .bar { height: 3px; width: 36px; background: #38bdf8; margin: 4px 0 8px; border-radius: 1px; }
-    .t { font-weight: 800; font-size: 11px; line-height: 1.1; margin-bottom: 4px; }
-    .st { font-size: 6px; opacity: 0.85; margin-bottom: 6px; font-family: system-ui, sans-serif; }
-    .bul { margin: 0; padding-left: 1em; font-family: system-ui, sans-serif; font-size: 6px; line-height: 1.4; }
-    .learn { border-left: 3px solid #38bdf8; padding: 6px 8px; background: rgba(255,255,255,.06); border-radius: 0 6px 6px 0;
-      font-family: system-ui, sans-serif; font-size: 6px; margin-bottom: 4px; }
-    .bc { display: flex; flex-direction: column; gap: 3px; }
-    .pill { padding: 4px 6px 4px 18px; background: rgba(255,255,255,.07); border-radius: 5px;
-      font-family: system-ui, sans-serif; font-size: 6px; position: relative; }
-    .pill::before { content: "01"; position: absolute; left: 4px; font-weight: 800; color: #38bdf8; font-size: 7px; }
-    .cg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
-    .cc { padding: 5px 6px; background: rgba(255,255,255,.06); border-top: 2px solid #38bdf8; border-radius: 0 0 5px 5px; }
-    .cc h3 { margin: 0 0 2px; font-size: 7px; }
-    .cc p { margin: 0; font-size: 6px; opacity: 0.9; font-family: system-ui, sans-serif; }
-    .big { font-size: 22px; font-weight: 800; color: #38bdf8; line-height: 1; }
-    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: start; }
-  </style>
-</head>
-<body>
-  <h1>Slide layout previews</h1>
-  <p class="lead">These mock the <strong>learning layouts</strong> SudarVid can render (hero, split learn, steps, contrast, stat focus, standard).
-    Real decks add theme fonts, generated images, and timed voiceover. Inspired by editorial / NotebookLM-style prompt ideas such as
-    <a href="https://github.com/serenakeyitan/awesome-notebookLM-prompts" target="_blank" rel="noreferrer">awesome-notebookLM-prompts</a>.
-    <a href="/">← Back to tester</a></p>
-  <div class="grid">
-    <div class="card"><h2>hero</h2><div class="stage"><div class="mini">
-      <div class="accent" style="font-size:5px;letter-spacing:.15em;">01 / 05</div>
-      <div class="bar"></div>
-      <div class="t">Big idea</div>
-      <div class="st">Short hook that frames why this matters.</div>
-    </div></div></div>
-    <div class="card"><h2>split_learn</h2><div class="stage"><div class="mini split">
-      <div>
-        <div class="learn"><strong style="color:#38bdf8;">Learning focus</strong><br/>One sentence outcome for the viewer.</div>
-      </div>
-      <div class="bc">
-        <div class="pill">Supporting fact one</div>
-        <div class="pill" style="padding-left:18px;">Fact two</div>
-      </div>
-      <div style="grid-column:1/-1;"><div class="t" style="font-size:9px;">Slide title</div></div>
-    </div></div></div>
-    <div class="card"><h2>steps</h2><div class="stage"><div class="mini">
-      <div class="bar"></div>
-      <div class="t" style="font-size:9px;">How it works</div>
-      <div class="pill">Do this first</div>
-      <div class="pill" style="padding-left:18px;"><span style="position:absolute;left:4px;color:#38bdf8;font-weight:800;">02</span>Then this</div>
-    </div></div></div>
-    <div class="card"><h2>contrast</h2><div class="stage"><div class="mini">
-      <div class="t" style="font-size:8px;">Compare</div>
-      <div class="cg">
-        <div class="cc"><h3>Concept A</h3><p>Detail for side A.</p></div>
-        <div class="cc"><h3>Concept B</h3><p>Detail for side B.</p></div>
-      </div>
-    </div></div></div>
-    <div class="card"><h2>stat_focus</h2><div class="stage"><div class="mini">
-      <div class="t" style="font-size:8px;">Proof point</div>
-      <div class="big">3×</div>
-      <div class="st" style="max-width:12em;">Caption explaining the number.</div>
-      <ul class="bul"><li>Context bullet</li></ul>
-    </div></div></div>
-    <div class="card"><h2>standard</h2><div class="stage"><div class="mini">
-      <div class="bar"></div>
-      <div class="t" style="font-size:9px;">Title</div>
-      <ul class="bul"><li>Classic bullet list</li><li>Second point</li></ul>
-    </div></div></div>
-  </div>
-</body>
-</html>
-""",
-        status_code=200,
-    )
-
-
-@app.get("/", summary="SudarVid test UI")
-async def ui_root() -> HTMLResponse:
-    return HTMLResponse(
-        """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SudarVid Tester</title>
-  <style>
-    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 20px; background: #0f1115; color: #eaeef5; }
-    .row { display: flex; gap: 16px; flex-wrap: wrap; }
-    .card { background: #161a22; border: 1px solid #2a3140; border-radius: 12px; padding: 16px; flex: 1 1 340px; }
-    label { display: block; font-size: 12px; opacity: 0.9; margin-bottom: 6px; }
-    input, select, textarea { width: 100%; background: #0b0d12; color: #eaeef5; border: 1px solid #2a3140; border-radius: 10px; padding: 10px; margin-bottom: 12px; }
-    textarea { min-height: 84px; resize: vertical; }
-    button { background: #3b82f6; border: 0; color: white; padding: 10px 14px; border-radius: 10px; cursor: pointer; }
-    button:disabled { opacity: 0.6; cursor: not-allowed; }
-    a { color: #93c5fd; }
-    .muted { opacity: 0.8; font-size: 12px; }
-    #previewFrame { width: 100%; height: 540px; border: 1px solid #2a3140; border-radius: 12px; background: #000; }
-    .status { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-  </style>
-</head>
-<body>
-  <h1 style="margin: 0 0 14px 0;">SudarVid Tester</h1>
-  <p class="muted" style="margin:0 0 16px 0;">
-    <a href="/design-previews">Layout &amp; component previews</a> (static demos, no API) ·
-    Slide structures borrow ideas from <a href="https://github.com/serenakeyitan/awesome-notebookLM-prompts" target="_blank" rel="noreferrer">awesome-notebookLM-prompts</a>.
-  </p>
-
-  <div class="row">
-    <div class="card">
-      <h3 style="margin-top:0;">1) Generate</h3>
-      <label>Topic</label>
-      <textarea id="topic">AI turns messy ideas into polished slide decks</textarea>
-
-      <label>Audience</label>
-      <input id="audience" value="general audience" />
-
-      <label>Language</label>
-      <input id="language" value="en" />
-
-      <label>Theme</label>
-      <select id="theme"></select>
-
-      <label>Slide count</label>
-      <input id="slideCount" value="5" />
-
-      <label>Animation level</label>
-      <select id="animationLevel">
-        <option value="subtle">subtle</option>
-        <option value="medium" selected>medium</option>
-        <option value="dynamic">dynamic</option>
-      </select>
-
-      <div class="muted">For now: MP4 export requires ffmpeg/ffprobe.</div>
-      <button id="btnGenerate">Generate (HTML+audio only)</button>
-      <div style="margin-top:10px;" class="status" id="status"></div>
-    </div>
-
-    <div class="card">
-      <h3 style="margin-top:0;">2) Preview existing job</h3>
-      <label>Job ID</label>
-      <input id="jobId" placeholder="e.g. 019d01e3-711f-47ef-b361-995776b788bc" />
-
-      <button id="btnLoadExisting" style="background:#22c55e;">Load preview</button>
-
-      <div style="margin-top:12px;">
-        <div class="muted">Preview uses relative URLs, served from <code>/render/&lt;job_id&gt;/...</code>.</div>
-        <iframe id="previewFrame" src="about:blank"></iframe>
-      </div>
-      <div style="margin-top:10px;" class="muted">
-        MP4 link (if generated): <a id="mp4Link" href="#" target="_blank" rel="noreferrer">output.mp4</a>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    const $ = (id) => document.getElementById(id);
-
-    function setStatus(s) { $("status").textContent = s; }
-
-    function getQueryJobId() {
-      try {
-        const u = new URL(window.location.href);
-        return u.searchParams.get("job_id") || "";
-      } catch { return ""; }
-    }
-
-    async function loadThemes() {
-      const res = await fetch("/themes");
-      const themes = await res.json();
-      const sel = $("theme");
-      sel.innerHTML = "";
-      for (const t of themes) {
-        const opt = document.createElement("option");
-        opt.value = t.id;
-        opt.textContent = t.label + " (" + t.id + ")";
-        sel.appendChild(opt);
-      }
-      // Prefer neo_retro_dev if present.
-      sel.value = "neo_retro_dev";
-    }
-
-    function buildPreviewSrc(jobId) {
-      // Serve slides.html and its relative assets via /render/<jobId>/...
-      return "/render/" + encodeURIComponent(jobId) + "/slides.html";
-    }
-
-    async function loadExisting() {
-      const jobId = $("jobId").value.trim();
-      if (!jobId) { alert("Paste a job_id first."); return; }
-      $("previewFrame").src = buildPreviewSrc(jobId);
-      $("mp4Link").href = "/render/" + encodeURIComponent(jobId) + "/video/output.mp4";
-    }
-
-    async function generate() {
-      setStatus("Starting job...");
-      $("btnGenerate").disabled = true;
-      $("btnGenerate").textContent = "Generating...";
-
-      const body = {
-        topic: $("topic").value,
-        audience: $("audience").value,
-        language: $("language").value,
-        theme: $("theme").value,
-        slide_count: parseInt($("slideCount").value, 10),
-        animation_level: $("animationLevel").value,
-        include_tts: true,
-        include_music: false,
-        output_html: true,
-        output_mp4: false
-      };
-
-      const res = await fetch("/generate", {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify(body)
-      });
-      const data = await res.json();
-      const jobId = data.job_id;
-      setStatus("job_id: " + jobId + "\\nstatus: queued");
-
-      // Poll status.
-      while (true) {
-        await new Promise(r => setTimeout(r, 2000));
-        const sRes = await fetch("/status/" + encodeURIComponent(jobId));
-        const s = await sRes.json();
-        setStatus("job_id: " + s.job_id + "\\nstatus: " + s.status + (s.error ? "\\nerror: " + s.error : ""));
-        if (s.status === "done") {
-          $("jobId").value = jobId;
-          $("previewFrame").src = buildPreviewSrc(jobId);
-          $("mp4Link").href = "/render/" + encodeURIComponent(jobId) + "/video/output.mp4";
-          break;
-        }
-        if (s.status === "error") break;
-      }
-
-      $("btnGenerate").disabled = false;
-      $("btnGenerate").textContent = "Generate (HTML+audio only)";
-    }
-
-    $("btnLoadExisting").addEventListener("click", loadExisting);
-    $("btnGenerate").addEventListener("click", generate);
-
-    loadThemes().then(() => {
-      const qJobId = getQueryJobId();
-      if (qJobId) {
-        $("jobId").value = qJobId;
-        $("previewFrame").src = buildPreviewSrc(qJobId);
-        $("mp4Link").href = "/render/" + encodeURIComponent(qJobId) + "/video/output.mp4";
-      }
-    });
-  </script>
-</body>
-</html>
-""",
-        status_code=200,
-    )
-
-
 @app.get("/health")
 async def health() -> dict:
     return {
@@ -619,3 +547,7 @@ async def health() -> dict:
         "ffprobe": bool(shutil.which("ffprobe")),
     }
 
+
+# SPA: register API routes above, then serve `frontend/` (index.html + assets).
+# html=True returns index.html for missing paths so `/preview/<id>` works client-side.
+app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

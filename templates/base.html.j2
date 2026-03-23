@@ -13,7 +13,7 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
-      font-family: {{ theme.font_body }};
+      font-family: {{ theme.font_body | safe }};
       padding-bottom: 58px;
       box-sizing: border-box;
     }
@@ -37,7 +37,8 @@
       padding: 64px;
       opacity: 0;
       pointer-events: none;
-      transition: opacity 0.05s;
+      transform: scale(1.015);
+      transition: opacity 0.42s ease, transform 0.5s ease;
       background: {{ theme.bg_color }};
       color: {{ theme.text_color }};
       overflow: hidden;
@@ -46,6 +47,7 @@
     .slide.active {
       opacity: 1;
       pointer-events: auto;
+      transform: scale(1);
     }
 
     .slide-image-wrap {
@@ -57,7 +59,19 @@
       width: 100%;
       height: 100%;
       object-fit: cover;
-      opacity: 0.22;
+      opacity: 0.34;
+    }
+    .slide-image-overlay {
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(
+          98deg,
+          color-mix(in srgb, {{ theme.bg_color }} 30%, transparent) 8%,
+          transparent 52%,
+          color-mix(in srgb, {{ theme.bg_color }} 38%, transparent) 100%
+        );
+      z-index: 1;
     }
 
     .slide-content {
@@ -74,7 +88,7 @@
       letter-spacing: -0.02em;
     }
     .slide-subtitle {
-      font-family: {{ theme.font_body }};
+      font-family: {{ theme.font_body | safe }};
       font-size: clamp(16px, 2vw, 26px);
       line-height: 1.45;
       opacity: 0.88;
@@ -82,7 +96,7 @@
       max-width: 36em;
     }
     .slide-learn-card {
-      font-family: {{ theme.font_body }};
+      font-family: {{ theme.font_body | safe }};
       font-size: clamp(15px, 1.55vw, 20px);
       line-height: 1.55;
       padding: 20px 22px;
@@ -108,7 +122,7 @@
     .layout-split_learn .slide-head { grid-column: 1 / -1; }
     .slide-bullet-cards { display: flex; flex-direction: column; gap: 12px; }
     .slide-bullet-card {
-      font-family: {{ theme.font_body }};
+      font-family: {{ theme.font_body | safe }};
       font-size: clamp(14px, 1.45vw, 19px);
       line-height: 1.5;
       padding: 14px 16px;
@@ -126,7 +140,7 @@
       margin-bottom: 12px;
       border-radius: 12px;
       background: color-mix(in srgb, {{ theme.text_color }} 8%, transparent);
-      font-family: {{ theme.font_body }};
+      font-family: {{ theme.font_body | safe }};
       font-size: clamp(14px, 1.5vw, 20px);
       line-height: 1.5;
     }
@@ -136,7 +150,7 @@
       left: 14px;
       top: 50%;
       transform: translateY(-50%);
-      font-family: {{ theme.font_heading }};
+      font-family: {{ theme.font_heading | safe }};
       font-weight: 800;
       font-size: 20px;
       color: {{ theme.accent_color }};
@@ -155,12 +169,12 @@
       border-top: 3px solid {{ theme.accent_color }};
     }
     .slide-contrast-col h3 {
-      font-family: {{ theme.font_heading }};
+      font-family: {{ theme.font_heading | safe }};
       font-size: clamp(18px, 2vw, 26px);
       margin-bottom: 10px;
     }
     .slide-contrast-col p {
-      font-family: {{ theme.font_body }};
+      font-family: {{ theme.font_body | safe }};
       font-size: clamp(14px, 1.45vw, 19px);
       line-height: 1.55;
       opacity: 0.92;
@@ -174,7 +188,7 @@
       margin: 12px 0 22px;
     }
     .slide-big-stat {
-      font-family: {{ theme.font_heading }};
+      font-family: {{ theme.font_heading | safe }};
       font-weight: 800;
       font-size: clamp(56px, 9vw, 120px);
       line-height: 1;
@@ -182,7 +196,7 @@
       color: {{ theme.accent_color }};
     }
     .slide-stat-caption {
-      font-family: {{ theme.font_body }};
+      font-family: {{ theme.font_body | safe }};
       font-size: clamp(15px, 1.6vw, 22px);
       max-width: 14em;
       line-height: 1.4;
@@ -194,11 +208,11 @@
       text-transform: uppercase;
       color: {{ theme.accent_color }};
       margin-bottom: 20px;
-      font-family: {{ theme.font_body }};
+      font-family: {{ theme.font_body | safe }};
     }
 
     .slide-title {
-      font-family: {{ theme.font_heading }};
+      font-family: {{ theme.font_heading | safe }};
       color: {{ theme.text_color }};
       margin-bottom: 28px;
       line-height: 1.08;
@@ -211,7 +225,7 @@
       padding-left: 1.4em;
     }
     .slide-bullets li {
-      font-family: {{ theme.font_body }};
+      font-family: {{ theme.font_body | safe }};
       color: {{ theme.text_color }};
       margin-bottom: 10px;
       line-height: 1.65;
@@ -234,8 +248,153 @@
       letter-spacing: 0.15em;
       color: {{ theme.accent_color }};
       opacity: 0.7;
-      font-family: {{ theme.font_body }};
+      font-family: {{ theme.font_body | safe }};
       z-index: 10;
+    }
+
+    /* —— Visual templates: image placement (LLM-selected) —— */
+    .slide.visual-full_bleed_bg { padding: 0; }
+    .slide.visual-split_right,
+    .slide.visual-split_left {
+      justify-content: stretch;
+      align-items: stretch;
+    }
+    .slide.visual-top_band { justify-content: flex-start; }
+    .slide.visual-inset_card { justify-content: flex-start; align-items: stretch; }
+    .slide.visual-inset_card .slide-inset-shell { flex: 1; min-height: 0; }
+    .slide.visual-full_bleed_bg .slide-bleed-foreground {
+      position: relative;
+      z-index: 2;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 100%;
+      padding: 64px;
+      box-sizing: border-box;
+    }
+
+    .slide.visual-split_right,
+    .slide.visual-split_left,
+    .slide.visual-top_band,
+    .slide.visual-inset_card { padding: 0; }
+
+    .slide-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-items: stretch;
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+    }
+    .slide-split.slide-split-single { grid-template-columns: 1fr; }
+
+    .slide-text-col {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 0;
+      overflow: auto;
+      padding: 52px 40px 56px 64px;
+      box-sizing: border-box;
+    }
+    .slide-text-col .slide-content { max-width: 100%; }
+
+    .slide-media-col {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 44px 56px 44px 36px;
+      box-sizing: border-box;
+      background: color-mix(in srgb, {{ theme.text_color }} 5%, transparent);
+    }
+    .slide-split-left .slide-media-col {
+      padding: 44px 36px 44px 56px;
+    }
+
+    .slide-media-frame {
+      width: 100%;
+      max-width: 520px;
+      aspect-ratio: 4 / 3;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 44px color-mix(in srgb, #000 26%, transparent);
+      border: 1px solid color-mix(in srgb, {{ theme.text_color }} 14%, transparent);
+    }
+    .slide-media-frame .slide-image {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 1;
+    }
+
+    .slide.visual-top_band {
+      flex-direction: column;
+      justify-content: flex-start;
+    }
+    .slide-top-band {
+      flex: 0 0 40%;
+      max-height: 46%;
+      min-height: 200px;
+      position: relative;
+      overflow: hidden;
+      background: color-mix(in srgb, {{ theme.text_color }} 6%, transparent);
+    }
+    .slide-top-band .slide-media-frame {
+      position: absolute;
+      inset: 0;
+      max-width: none;
+      width: 100%;
+      height: 100%;
+      border-radius: 0;
+      aspect-ratio: auto;
+      border: none;
+      box-shadow: none;
+    }
+    .slide-top-band .slide-media-frame .slide-image {
+      object-fit: cover;
+    }
+    .slide-stack-body {
+      flex: 1;
+      padding: 48px 64px 60px;
+      overflow: auto;
+      box-sizing: border-box;
+      min-height: 0;
+    }
+    .slide-stack-body .slide-content { max-width: 92%; }
+
+    .slide-inset-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(240px, 32%);
+      gap: 32px;
+      align-items: start;
+      flex: 1;
+      padding: 52px 56px 64px 64px;
+      box-sizing: border-box;
+      min-height: 0;
+      overflow: auto;
+    }
+    .slide-inset-shell.slide-inset-single {
+      grid-template-columns: 1fr;
+    }
+    .slide-inset-shell .slide-content { max-width: 100%; }
+    .slide-inset-aside {
+      position: sticky;
+      top: 48px;
+    }
+    .slide-inset-aside .slide-media-frame {
+      max-width: 100%;
+      aspect-ratio: 1 / 1;
+    }
+
+    .slide-visual-none-inner {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 0;
+      padding: 64px;
+      box-sizing: border-box;
     }
 
     /* Bottom playback controls (hidden during headless capture — see sudarvid.js) */
@@ -252,7 +411,7 @@
       padding: 12px 16px;
       background: rgba(15, 17, 21, 0.94);
       border-top: 1px solid color-mix(in srgb, {{ theme.accent_color }} 45%, transparent);
-      font-family: {{ theme.font_body }}, system-ui, sans-serif;
+      font-family: {{ theme.font_body | safe }}, system-ui, sans-serif;
       box-sizing: border-box;
     }
     #sudarvid-player-ui button {
@@ -294,12 +453,13 @@
       margin: 0;
     }
 
-    {{ theme.css_extra }}
+    {{ theme.css_extra | safe }}
 
     {% if animation_level == 'subtle' %}
     .slide.active .slide-content  { animation: fadeInUp 0.85s cubic-bezier(.22,.68,0,1.2) both; }
     .slide.active .slide-nav-label{ animation: fadeIn 0.6s ease both; }
-    .slide.active .slide-image    { animation: subtleZoom 8s ease-out both; }
+    .slide.active.visual-full_bleed_bg .slide-image-wrap .slide-image { animation: subtleZoom 8s ease-out both; }
+    .slide.active .slide-media-frame .slide-image { animation: frameDrift 12s ease-in-out both; }
     .slide.active .slide-subtitle { animation: fadeInUp 0.75s ease 0.12s both; }
     .slide.active .slide-learn-card { animation: fadeInUp 0.7s ease 0.1s both; }
     .slide.active .slide-bullet-card:nth-child(1) { animation: fadeInUp 0.65s ease 0.2s both; }
@@ -317,6 +477,7 @@
     @keyframes fadeInUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     @keyframes subtleZoom { from { transform: scale(1.04); } to { transform: scale(1.10); } }
+    @keyframes frameDrift { from { transform: scale(1.02); } to { transform: scale(1.06); } }
     {% endif %}
 
     {% if animation_level == 'medium' %}
@@ -342,15 +503,18 @@
     .slide.active .slide-contrast-col:nth-child(2) { animation: fadeInUp 0.6s ease 0.38s both; }
     .slide.active .slide-big-stat { animation: cardPop 0.7s cubic-bezier(.34,1.56,.64,1) 0.12s both; }
     .slide.active .slide-stat-caption { animation: fadeInUp 0.55s ease 0.28s both; }
-    .slide.active .slide-image { animation: mediumDrift 10s ease-in-out both; }
+    .slide.active.visual-full_bleed_bg .slide-image-wrap .slide-image { animation: mediumDrift 10s ease-in-out both; }
+    .slide.active .slide-media-frame .slide-image { animation: frameDriftMed 11s ease-in-out both; }
     @keyframes fadeInUp { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes slideInLeft { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
     @keyframes mediumDrift { 0% { transform: scale(1.05) translateY(0px); } 100% { transform: scale(1.12) translateY(-12px); } }
+    @keyframes frameDriftMed { 0% { transform: scale(1.03) translateY(0px); } 100% { transform: scale(1.08) translateY(-6px); } }
     @keyframes cardPop { from { opacity: 0; transform: translateY(16px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
     {% endif %}
 
     {% if animation_level == 'dynamic' %}
-    .slide.active .slide-image { animation: parallaxReveal 1.1s cubic-bezier(.22,.68,0,1.2) both; }
+    .slide.active.visual-full_bleed_bg .slide-image-wrap .slide-image { animation: parallaxReveal 1.1s cubic-bezier(.22,.68,0,1.2) both; }
+    .slide.active .slide-media-frame .slide-image { animation: frameReveal 1s cubic-bezier(.22,.68,0,1.2) both; }
     .slide.active .slide-nav-label { animation: blastIn 0.45s cubic-bezier(.22,.68,0,1.5) both; }
     .slide.active .slide-title { animation: parallaxUp 0.75s cubic-bezier(.22,.68,0,1.3) 0.12s both; }
     .slide.active .slide-accent-bar { animation: expandBar 0.6s ease 0.3s both; }
@@ -374,6 +538,7 @@
     .slide.active .slide-big-stat { animation: parallaxUp 0.85s cubic-bezier(.22,.68,0,1.3) 0.08s both; }
     .slide.active .slide-stat-caption { animation: snapIn 0.45s ease 0.3s both; }
     @keyframes parallaxReveal { from { opacity: 0.4; transform: scale(1.14) translateY(-20px); } to { opacity: 1; transform: scale(1.08) translateY(0); } }
+    @keyframes frameReveal { from { opacity: 0.85; transform: scale(1.05); } to { opacity: 1; transform: scale(1.02); } }
     @keyframes parallaxUp { from { opacity: 0; transform: translateY(44px) skewY(1.5deg); } to { opacity: 1; transform: translateY(0) skewY(0deg); } }
     @keyframes blastIn { from { opacity: 0; transform: translateX(-32px) scale(0.9); } to { opacity: 1; transform: translateX(0) scale(1); } }
     @keyframes snapIn { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: translateX(0); } }
@@ -382,23 +547,7 @@
   </style>
 </head>
 <body>
-  <div id="deck">
-    {% for slide in slides %}
-    {% set eff = namespace(kind=slide.layout_kind or 'standard') %}
-    {% if eff.kind == 'contrast' and slide.bullets|length < 4 %}{% set eff.kind = 'standard' %}{% endif %}
-    {% if eff.kind == 'stat_focus' and not slide.big_stat %}{% set eff.kind = 'standard' %}{% endif %}
-    <section
-      class="slide layout-{{ eff.kind }}{% if loop.first %} active{% endif %}"
-      data-index="{{ slide.index }}"
-      data-duration="{{ slide.duration_seconds }}"
-      data-layout="{{ eff.kind }}"
-    >
-      {% if slide.image_path %}
-      <div class="slide-image-wrap">
-        <img class="slide-image" src="{{ slide.image_path }}" alt="" draggable="false" />
-      </div>
-      {% endif %}
-
+{% macro slide_inner(slide, slides) %}
       {% if slide.layout_kind == 'hero' %}
       <div class="slide-content">
         <div class="slide-nav-label">
@@ -530,6 +679,102 @@
         {% endif %}
       </div>
       {% endif %}
+{% endmacro %}
+
+  <div id="deck">
+    {% for slide in slides %}
+    {% set eff = namespace(kind=slide.layout_kind or 'standard') %}
+    {% if eff.kind == 'contrast' and slide.bullets|length < 4 %}{% set eff.kind = 'standard' %}{% endif %}
+    {% if eff.kind == 'stat_focus' and not slide.big_stat %}{% set eff.kind = 'standard' %}{% endif %}
+    {% set vt = slide.visual_template | default('full_bleed_bg') %}
+    <section
+      class="slide layout-{{ eff.kind }} visual-{{ vt }}{% if loop.first %} active{% endif %}"
+      data-index="{{ slide.index }}"
+      data-duration="{{ slide.duration_seconds }}"
+      data-layout="{{ eff.kind }}"
+      data-visual-template="{{ vt }}"
+    >
+      {% if vt == 'full_bleed_bg' %}
+      {% if slide.image_path %}
+      <div class="slide-image-wrap">
+        <img class="slide-image" src="{{ slide.image_path }}" alt="" draggable="false" />
+        <div class="slide-image-overlay" aria-hidden="true"></div>
+      </div>
+      {% endif %}
+      <div class="slide-bleed-foreground">
+        {{ slide_inner(slide, slides) }}
+      </div>
+
+      {% elif vt == 'top_band' %}
+      {% if slide.image_path %}
+      <div class="slide-top-band">
+        <div class="slide-media-frame">
+          <img class="slide-image" src="{{ slide.image_path }}" alt="" draggable="false" />
+        </div>
+      </div>
+      {% endif %}
+      <div class="slide-stack-body">
+        {{ slide_inner(slide, slides) }}
+      </div>
+
+      {% elif vt == 'split_right' %}
+      <div class="slide-split slide-split-right{% if not slide.image_path %} slide-split-single{% endif %}">
+        <div class="slide-text-col">
+          {{ slide_inner(slide, slides) }}
+        </div>
+        {% if slide.image_path %}
+        <div class="slide-media-col">
+          <div class="slide-media-frame">
+            <img class="slide-image" src="{{ slide.image_path }}" alt="" draggable="false" />
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      {% elif vt == 'split_left' %}
+      <div class="slide-split slide-split-left{% if not slide.image_path %} slide-split-single{% endif %}">
+        {% if slide.image_path %}
+        <div class="slide-media-col">
+          <div class="slide-media-frame">
+            <img class="slide-image" src="{{ slide.image_path }}" alt="" draggable="false" />
+          </div>
+        </div>
+        {% endif %}
+        <div class="slide-text-col">
+          {{ slide_inner(slide, slides) }}
+        </div>
+      </div>
+
+      {% elif vt == 'inset_card' %}
+      <div class="slide-inset-shell{% if not slide.image_path %} slide-inset-single{% endif %}">
+        <div class="slide-inset-main">
+          {{ slide_inner(slide, slides) }}
+        </div>
+        {% if slide.image_path %}
+        <aside class="slide-inset-aside" aria-hidden="true">
+          <div class="slide-media-frame">
+            <img class="slide-image" src="{{ slide.image_path }}" alt="" draggable="false" />
+          </div>
+        </aside>
+        {% endif %}
+      </div>
+
+      {% elif vt == 'none' %}
+      <div class="slide-visual-none-inner">
+        {{ slide_inner(slide, slides) }}
+      </div>
+
+      {% else %}
+      {% if slide.image_path %}
+      <div class="slide-image-wrap">
+        <img class="slide-image" src="{{ slide.image_path }}" alt="" draggable="false" />
+        <div class="slide-image-overlay" aria-hidden="true"></div>
+      </div>
+      {% endif %}
+      <div class="slide-bleed-foreground">
+        {{ slide_inner(slide, slides) }}
+      </div>
+      {% endif %}
 
       <div class="slide-index">SudarVid</div>
     </section>
@@ -552,7 +797,7 @@
   <script>
     window.SUDARVID_SLIDES = [
       {% for slide in slides %}
-      { "index": {{ slide.index }}, "duration": {{ slide.duration_seconds }} }{% if not loop.last %},{% endif %}
+      { "index": {{ slide.index }}, "duration": {{ slide.duration_seconds }}, "visual_template": {{ slide.visual_template | default('full_bleed_bg') | tojson }} }{% if not loop.last %},{% endif %}
       {% endfor %}
     ];
     window.IS_CAPTURE = false; // overridden by Playwright before load

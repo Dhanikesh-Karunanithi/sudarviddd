@@ -9,6 +9,102 @@ from together import Together
 
 from .types import GenerationConfig, SlideContent
 
+VISUAL_TEMPLATES = frozenset(
+    {
+        "full_bleed_bg",
+        "split_right",
+        "split_left",
+        "top_band",
+        "inset_card",
+        "none",
+    }
+)
+
+
+def _default_visual_template(layout_kind: str) -> str:
+    """When the planner omits visual_template, use a sensible default per pedagogy layout."""
+    return {
+        "hero": "top_band",
+        "split_learn": "split_right",
+        "steps": "split_left",
+        "contrast": "inset_card",
+        "stat_focus": "top_band",
+        "standard": "full_bleed_bg",
+    }.get(layout_kind, "full_bleed_bg")
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _json_response_enabled() -> bool:
+    """Default on; set TOGETHER_JSON_RESPONSE=0|false|no|off to disable."""
+    v = os.environ.get("TOGETHER_JSON_RESPONSE", "1").strip().lower()
+    if v in ("0", "false", "no", "off"):
+        return False
+    return True
+
+
+def _truncate_text(value: Optional[str], max_words: int, max_chars: int) -> Optional[str]:
+    if not value:
+        return None
+    words = [w for w in str(value).strip().split() if w]
+    if max_words > 0 and len(words) > max_words:
+        words = words[:max_words]
+    text = " ".join(words).strip()
+    if max_chars > 0 and len(text) > max_chars:
+        text = text[: max_chars - 1].rstrip(" ,;:-") + "…"
+    return text or None
+
+
+def _compact_slide_text(slide: SlideContent) -> SlideContent:
+    """Tighten on-slide copy; limits overridable via SUDARVID_* env vars."""
+    bullet_limits = {
+        "hero": 2,
+        "split_learn": 3,
+        "steps": 4,
+        "contrast": 4,
+        "stat_focus": 3,
+        "standard": 4,
+    }
+    max_bullets = bullet_limits.get(slide.layout_kind, 4)
+    bw = _env_int("SUDARVID_BULLET_MAX_WORDS", 18)
+    bc = _env_int("SUDARVID_BULLET_MAX_CHARS", 100)
+    compact_bullets: List[str] = []
+    for b in slide.bullets[:max_bullets]:
+        t = _truncate_text(b, max_words=bw, max_chars=bc)
+        if t:
+            compact_bullets.append(t)
+
+    slide.title = (
+        _truncate_text(
+            slide.title,
+            max_words=_env_int("SUDARVID_TITLE_MAX_WORDS", 12),
+            max_chars=_env_int("SUDARVID_TITLE_MAX_CHARS", 88),
+        )
+        or "Untitled slide"
+    )
+    slide.subtitle = _truncate_text(
+        slide.subtitle,
+        max_words=_env_int("SUDARVID_SUBTITLE_MAX_WORDS", 18),
+        max_chars=_env_int("SUDARVID_SUBTITLE_MAX_CHARS", 108),
+    )
+    slide.learning_point = _truncate_text(
+        slide.learning_point,
+        max_words=_env_int("SUDARVID_LEARNING_POINT_MAX_WORDS", 20),
+        max_chars=_env_int("SUDARVID_LEARNING_POINT_MAX_CHARS", 128),
+    )
+    slide.stat_caption = _truncate_text(
+        slide.stat_caption,
+        max_words=_env_int("SUDARVID_STAT_CAPTION_MAX_WORDS", 12),
+        max_chars=_env_int("SUDARVID_STAT_CAPTION_MAX_CHARS", 72),
+    )
+    slide.bullets = compact_bullets
+    return slide
+
 
 def _coerce_slides_array(value: Any) -> List[Any]:
     """JSON often has slides: null or a single object instead of an array."""
@@ -65,6 +161,7 @@ def _fallback_slides(config: GenerationConfig) -> List[SlideContent]:
                     "Editorial style, no text or typography in the image."
                 ),
                 layout_kind="hero" if i == 0 else "standard",
+                visual_template="top_band" if i == 0 else "full_bleed_bg",
                 subtitle="Fallback deck — AI returned no slide list" if i == 0 else None,
             )
         )
@@ -206,10 +303,31 @@ CONTENT_PLANNER_SYSTEM_PROMPT = """
 You are the slide planning engine for an app called SudarVid.
 
 Goal:
-- Produce TEACHING / LEARNING content: each slide should help the viewer understand something new
-  (definitions, cause-effect, steps, contrast, or a memorable stat), not generic marketing copy.
-- Vary slide layouts so the video feels dynamic (inspired by editorial / NotebookLM-style decks:
-  strong hierarchy, asymmetry, clear sections — see creative prompt collections for tone).
+- Produce TEACHING / LEARNING content: each slide must help the viewer understand something concrete
+  (definition, cause-effect, ordered steps, contrast, worked implication, or a memorable stat with context).
+- Avoid filler: no vague bullets like "important concept", "key takeaway", "things to know" without naming
+  what specifically (use nouns, numbers, named relationships, or short examples).
+- Vary slide layouts so the video feels dynamic (editorial / NotebookLM-style: hierarchy, asymmetry, sections).
+
+Quality rubric (every slide must pass):
+- Title states the micro-topic in plain language (not clickbait).
+- At least one bullet or the narration names a specific idea, example, or distinction (not only adjectives).
+- learning_point (when used) states what the learner can DO or EXPLAIN after the slide.
+- Narration: 2–4 spoken sentences; teach in order (define → explain → example or implication); do not read bullets verbatim.
+
+image_prompt rubric (for a text-free diffusion image):
+- Describe ONE clear scene or metaphor: subject + setting + mood + composition (e.g. wide shot, single focal object).
+  Match theme_id mood.
+- Do NOT ask for charts, maps, books, signage, UI, HUD, screenshots, labeled diagrams, scientific figures with labels,
+  posters with writing, or any readable text in the image.
+
+visual_template (where the image appears in the slide frame — choose per slide for variety):
+- full_bleed_bg: soft full-screen background behind text (decorative; image is low prominence).
+- split_right: text column left, image in a framed card on the right (best for metaphors and concepts).
+- split_left: image card left, text right.
+- top_band: wide image strip on top, content below (strong for hero and chapter breaks).
+- inset_card: smaller framed image (e.g. corner or side) so text stays primary (dense slides).
+- none: no image (text-only slide; omit image-heavy prompts).
 
 Constraints:
 - Output strictly valid JSON matching this schema:
@@ -219,8 +337,9 @@ Constraints:
         "title": "string",
         "bullets": ["string", ...],
         "narration": "string (~2-4 sentences, spoken, teaching tone)",
-        "image_prompt": "string (for image generator, no line breaks, no text in image)",
+        "image_prompt": "string (single line; subject + setting + mood + composition; no text in image)",
         "layout_kind": "standard | hero | split_learn | steps | contrast | stat_focus",
+        "visual_template": "full_bleed_bg | split_right | split_left | top_band | inset_card | none",
         "subtitle": "string or empty — short hook under title (hero / split_learn)",
         "learning_point": "string or empty — one sentence: what the viewer should understand after this slide",
         "big_stat": "string or empty — e.g. 80%, 3x, Step 2 (for stat_focus / emphasis)",
@@ -241,12 +360,32 @@ Rules:
 - 1 slide = 1 clear learning outcome.
 - No markdown in any string. Plain text only for on-slide fields.
 - All visible text and narration must be in the requested language.
-- Tailor depth to the audience (explain terms for beginners; be denser for experts).
-- image_prompt should match theme_id mood but never ask for readable text in the image.
+- Tailor depth using difficulty and audience (define jargon for beginners; use denser links for advanced).
+
+Compact example (tone only; do not copy topics):
+{"slides":[{"title":"What is osmosis","bullets":["Water moves through a semi-permeable membrane toward higher solute concentration","Net flow stops at equilibrium"],"narration":"Osmosis is net movement of water across a membrane toward where solutes are more concentrated. At equilibrium, water movement balances and concentrations stabilize.","image_prompt":"Single glass beaker with water and a subtle membrane divider, soft lab lighting, centered subject","layout_kind":"split_learn","visual_template":"split_right","subtitle":"","learning_point":"Learners can explain direction of water flow across a membrane","big_stat":"","stat_caption":""}]}
 
 Formatting:
 - Return JSON only. No markdown.
 """.strip()
+
+
+CONTENT_EXTENDER_SYSTEM_PROMPT = """
+You extend an existing SudarVid teaching deck. The learner already saw the slides listed in the user message.
+Add NEW slides only — do not repeat titles or re-cover the same subtopics.
+
+Same JSON schema as the main planner: {"slides":[...]} with the same fields per slide, including visual_template.
+Quality: same rubric — concrete teaching, no vague bullets; image_prompt = one metaphor, no text in image;
+vary visual_template across new slides.
+Return JSON only. No markdown.
+""".strip()
+
+
+def _optional_block(label: str, value: Optional[str]) -> str:
+    v = (value or "").strip()
+    if not v:
+        return f"{label}: (none)"
+    return f"{label}:\n{v}"
 
 
 def build_content_planner_user_prompt(config: GenerationConfig) -> str:
@@ -256,17 +395,52 @@ audience: {config.audience}
 language: {config.language}
 theme_id: {config.theme.value}
 slide_count: {config.slide_count}
+difficulty: {config.difficulty or "(not specified; infer from audience)"}
+
+{_optional_block("learning_objectives", config.learning_objectives)}
+{_optional_block("source_notes (curriculum alignment)", config.source_notes)}
+{_optional_block("constraints (include/avoid)", config.constraints)}
 
 custom_content (may be empty):
 {config.custom_content or ""}
 
 Instructions:
+- If learning_objectives or source_notes are provided, align every slide to them; do not invent unrelated scope.
+- If difficulty is set, match explanation depth to that level.
 - Vary layout_kind across slides (do not use only "standard").
+- Vary visual_template across slides (do not use only full_bleed_bg; use split_* and top_band for stronger visuals).
 - If slide_count >= 5, include at least one split_learn and at least one of steps or contrast.
-- First slide should usually be hero.
+- First slide should usually be hero with visual_template top_band or full_bleed_bg.
+- For split_learn and steps slides, set learning_point when it helps the learner verify understanding.
 
 Return JSON only, no markdown, no explanation.
 """.strip()
+
+
+def _parse_slide_dict(idx: int, s: Any, allowed_layouts: frozenset) -> SlideContent:
+    if not isinstance(s, dict):
+        raise RuntimeError(f"slides[{idx}] must be a JSON object, got {type(s).__name__!r}.")
+    raw_layout = str(s.get("layout_kind", "standard") or "standard").strip().lower()
+    layout = raw_layout if raw_layout in allowed_layouts else "standard"
+    raw_bullets = s.get("bullets") or []
+    if not isinstance(raw_bullets, list):
+        raw_bullets = []
+    bullets = [str(b).strip() for b in raw_bullets if b is not None and str(b).strip()]
+    raw_vt = str(s.get("visual_template", "") or "").strip().lower()
+    visual_template = raw_vt if raw_vt in VISUAL_TEMPLATES else _default_visual_template(layout)
+    return SlideContent(
+        index=idx,
+        title=str(s.get("title", "")).strip(),
+        bullets=bullets,
+        narration=str(s.get("narration", "")).strip(),
+        image_prompt=str(s.get("image_prompt", "")).strip(),
+        layout_kind=layout,
+        visual_template=visual_template,
+        subtitle=(str(s.get("subtitle", "")).strip() or None),
+        learning_point=(str(s.get("learning_point", "")).strip() or None),
+        big_stat=(str(s.get("big_stat", "")).strip() or None),
+        stat_caption=(str(s.get("stat_caption", "")).strip() or None),
+    )
 
 
 class ContentPlanner:
@@ -285,19 +459,17 @@ class ContentPlanner:
         self.client = Together(api_key=api_key)
         self.model = model
 
-    def plan_slides(self, config: GenerationConfig) -> List[SlideContent]:
-        user_prompt = build_content_planner_user_prompt(config)
-
+    def _chat_json(self, system: str, user: str) -> dict:
         create_kwargs: dict = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": CONTENT_PLANNER_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
             ],
             "temperature": 0.35,
             "max_tokens": 4096,
         }
-        if os.environ.get("TOGETHER_JSON_RESPONSE", "").lower() in ("1", "true", "yes"):
+        if _json_response_enabled():
             create_kwargs["response_format"] = {"type": "json_object"}
 
         resp = self.client.chat.completions.create(**create_kwargs)
@@ -322,8 +494,71 @@ class ContentPlanner:
                 f"(finish_reason={finish!r}). Try TOGETHER_TEXT_MODEL=openai/gpt-oss-20b "
                 "or another JSON-friendly chat model."
             )
+        return _parse_slide_plan_json(raw)
 
-        data = _parse_slide_plan_json(raw)
+    def _extend_slides(
+        self,
+        existing: List[SlideContent],
+        config: GenerationConfig,
+        need_count: int,
+        allowed_layouts: frozenset,
+    ) -> List[SlideContent]:
+        if need_count <= 0:
+            return []
+        lines: List[str] = []
+        for i, sl in enumerate(existing, start=1):
+            bpreview = ", ".join(sl.bullets[:4]) if sl.bullets else ""
+            lp = sl.learning_point or ""
+            lines.append(
+                f"{i}. [{sl.layout_kind}] {sl.title}"
+                + (f" | {lp}" if lp else "")
+                + (f" | {bpreview}" if bpreview else "")
+            )
+        summary = "\n".join(lines)
+        user = f"""
+topic: {config.topic}
+audience: {config.audience}
+language: {config.language}
+theme_id: {config.theme.value}
+difficulty: {config.difficulty or "(infer)"}
+
+{_optional_block("learning_objectives", config.learning_objectives)}
+{_optional_block("source_notes", config.source_notes)}
+{_optional_block("constraints", config.constraints)}
+
+Existing slides (do not repeat or lightly rephrase these; add genuinely new teaching steps):
+{summary}
+
+Generate exactly {need_count} NEW slides continuing the teaching arc (deeper detail, application, common mistake,
+summary, or next subtopic). Return JSON with a "slides" array.
+""".strip()
+
+        try:
+            data = self._chat_json(CONTENT_EXTENDER_SYSTEM_PROMPT, user)
+        except Exception as e:
+            print(
+                f"[SudarVid] WARNING: Could not extend deck via LLM ({e!s}). "
+                f"Keeping {len(existing)} slides (short of requested {config.slide_count}).",
+                file=sys.stderr,
+            )
+            return []
+
+        slides_data = _extract_slides_payload(data)
+        start = len(existing)
+        out: List[SlideContent] = []
+        for j, s in enumerate(slides_data):
+            if len(out) >= need_count:
+                break
+            try:
+                out.append(_parse_slide_dict(start + j, s, allowed_layouts))
+            except RuntimeError:
+                continue
+        return out
+
+    def plan_slides(self, config: GenerationConfig) -> List[SlideContent]:
+        user_prompt = build_content_planner_user_prompt(config)
+
+        data = self._chat_json(CONTENT_PLANNER_SYSTEM_PROMPT, user_prompt)
         slides_data = _extract_slides_payload(data)
 
         allowed_layouts = frozenset(
@@ -332,34 +567,7 @@ class ContentPlanner:
 
         slides: List[SlideContent] = []
         for idx, s in enumerate(slides_data):
-            if not isinstance(s, dict):
-                raise RuntimeError(
-                    f"slides[{idx}] must be a JSON object, got {type(s).__name__!r}."
-                )
-            raw_layout = str(s.get("layout_kind", "standard") or "standard").strip().lower()
-            layout = raw_layout if raw_layout in allowed_layouts else "standard"
-            raw_bullets = s.get("bullets") or []
-            if not isinstance(raw_bullets, list):
-                raw_bullets = []
-            bullets = [
-                str(b).strip()
-                for b in raw_bullets
-                if b is not None and str(b).strip()
-            ]
-            slides.append(
-                SlideContent(
-                    index=idx,
-                    title=str(s.get("title", "")).strip(),
-                    bullets=bullets,
-                    narration=str(s.get("narration", "")).strip(),
-                    image_prompt=str(s.get("image_prompt", "")).strip(),
-                    layout_kind=layout,
-                    subtitle=(str(s.get("subtitle", "")).strip() or None),
-                    learning_point=(str(s.get("learning_point", "")).strip() or None),
-                    big_stat=(str(s.get("big_stat", "")).strip() or None),
-                    stat_caption=(str(s.get("stat_caption", "")).strip() or None),
-                )
-            )
+            slides.append(_parse_slide_dict(idx, s, allowed_layouts))
 
         if not slides:
             print(
@@ -373,24 +581,20 @@ class ContentPlanner:
             if len(slides) > target:
                 slides = slides[:target]
             elif len(slides) < target:
-                last = slides[-1]
-                while len(slides) < target:
-                    slides.append(
-                        SlideContent(
-                            index=len(slides),
-                            title=last.title,
-                            bullets=list(last.bullets),
-                            narration=last.narration,
-                            image_prompt=last.image_prompt,
-                            layout_kind=last.layout_kind,
-                            subtitle=last.subtitle,
-                            learning_point=last.learning_point,
-                            big_stat=last.big_stat,
-                            stat_caption=last.stat_caption,
-                        )
+                need = target - len(slides)
+                extra = self._extend_slides(slides, config, need, allowed_layouts)
+                slides = slides + extra
+                if len(slides) > target:
+                    slides = slides[:target]
+                if len(slides) < target:
+                    print(
+                        "[SudarVid] WARNING: Deck has fewer slides than requested "
+                        f"({len(slides)} < {target}) after extension; not padding with duplicates.",
+                        file=sys.stderr,
                     )
 
         for i, s in enumerate(slides):
             s.index = i
+            _compact_slide_text(s)
         return slides
 
