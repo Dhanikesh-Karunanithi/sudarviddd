@@ -361,6 +361,9 @@ Rules:
 - No markdown in any string. Plain text only for on-slide fields.
 - All visible text and narration must be in the requested language.
 - Tailor depth using difficulty and audience (define jargon for beginners; use denser links for advanced).
+- If a persona is specified in the user message, ALL slide titles, bullets, subtitles, and narration must be written
+  in that character's voice and style. The persona is the NARRATOR and TEACHER delivering the topic — not the topic
+  itself. Do not ignore the persona or reduce it to a subtitle; stay consistently in character while teaching.
 
 Compact example (tone only; do not copy topics):
 {"slides":[{"title":"What is osmosis","bullets":["Water moves through a semi-permeable membrane toward higher solute concentration","Net flow stops at equilibrium"],"narration":"Osmosis is net movement of water across a membrane toward where solutes are more concentrated. At equilibrium, water movement balances and concentrations stabilize.","image_prompt":"Single glass beaker with water and a subtle membrane divider, soft lab lighting, centered subject","layout_kind":"split_learn","visual_template":"split_right","subtitle":"","learning_point":"Learners can explain direction of water flow across a membrane","big_stat":"","stat_caption":""}]}
@@ -389,6 +392,13 @@ def _optional_block(label: str, value: Optional[str]) -> str:
 
 
 def build_content_planner_user_prompt(config: GenerationConfig) -> str:
+    persona_block = ""
+    if (config.persona or "").strip():
+        persona_block = (
+            f"\npersona / voice style:\n{(config.persona or '').strip()}\n"
+            "IMPORTANT: Write ALL narration, bullets, titles, and subtitles in this persona's voice. "
+            "The persona is not the subject — it is the TEACHER delivering the content.\n"
+        )
     return f"""
 topic: {config.topic}
 audience: {config.audience}
@@ -396,7 +406,7 @@ language: {config.language}
 theme_id: {config.theme.value}
 slide_count: {config.slide_count}
 difficulty: {config.difficulty or "(not specified; infer from audience)"}
-
+{persona_block}
 {_optional_block("learning_objectives", config.learning_objectives)}
 {_optional_block("source_notes (curriculum alignment)", config.source_notes)}
 {_optional_block("constraints (include/avoid)", config.constraints)}
@@ -405,6 +415,7 @@ custom_content (may be empty):
 {config.custom_content or ""}
 
 Instructions:
+- If a persona is specified above, every slide must sound like that narrator while still teaching the topic clearly.
 - If learning_objectives or source_notes are provided, align every slide to them; do not invent unrelated scope.
 - If difficulty is set, match explanation depth to that level.
 - Vary layout_kind across slides (do not use only "standard").
@@ -459,14 +470,14 @@ class ContentPlanner:
         self.client = Together(api_key=api_key)
         self.model = model
 
-    def _chat_json(self, system: str, user: str) -> dict:
+    def _chat_json(self, system: str, user: str, temperature: float = 0.35) -> dict:
         create_kwargs: dict = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "temperature": 0.35,
+            "temperature": temperature,
             "max_tokens": 4096,
         }
         if _json_response_enabled():
@@ -515,13 +526,17 @@ class ContentPlanner:
                 + (f" | {bpreview}" if bpreview else "")
             )
         summary = "\n".join(lines)
+        persona_note = ""
+        if (config.persona or "").strip():
+            persona_note = f"\npersona (keep voice consistent): {(config.persona or '').strip()}\n"
+
         user = f"""
 topic: {config.topic}
 audience: {config.audience}
 language: {config.language}
 theme_id: {config.theme.value}
 difficulty: {config.difficulty or "(infer)"}
-
+{persona_note}
 {_optional_block("learning_objectives", config.learning_objectives)}
 {_optional_block("source_notes", config.source_notes)}
 {_optional_block("constraints", config.constraints)}
@@ -533,8 +548,9 @@ Generate exactly {need_count} NEW slides continuing the teaching arc (deeper det
 summary, or next subtopic). Return JSON with a "slides" array.
 """.strip()
 
+        ext_temp = 0.55 if (config.persona or "").strip() else 0.35
         try:
-            data = self._chat_json(CONTENT_EXTENDER_SYSTEM_PROMPT, user)
+            data = self._chat_json(CONTENT_EXTENDER_SYSTEM_PROMPT, user, temperature=ext_temp)
         except Exception as e:
             print(
                 f"[SudarVid] WARNING: Could not extend deck via LLM ({e!s}). "
@@ -558,7 +574,8 @@ summary, or next subtopic). Return JSON with a "slides" array.
     def plan_slides(self, config: GenerationConfig) -> List[SlideContent]:
         user_prompt = build_content_planner_user_prompt(config)
 
-        data = self._chat_json(CONTENT_PLANNER_SYSTEM_PROMPT, user_prompt)
+        temp = 0.7 if (config.persona or "").strip() else 0.4
+        data = self._chat_json(CONTENT_PLANNER_SYSTEM_PROMPT, user_prompt, temperature=temp)
         slides_data = _extract_slides_payload(data)
 
         allowed_layouts = frozenset(

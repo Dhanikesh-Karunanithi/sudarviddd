@@ -15,6 +15,7 @@ class ThemeSpec:
     font_heading: str
     font_body: str
     css_extra: str = ""
+    google_fonts_url: str = ""
 
 
 THEMES: Dict[str, ThemeSpec] = {
@@ -25,8 +26,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#111111",
         accent_color="#FFCC00",
         secondary_accent="#FF3333",
-        font_heading="'Impact','Arial Black',sans-serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'DM Sans','Impact','Arial Black',sans-serif",
+        font_body="'DM Sans','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&display=swap",
     ),
     "sharp_minimalism": ThemeSpec(
         id="sharp_minimalism",
@@ -35,8 +37,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#111111",
         accent_color="#111111",
         secondary_accent="#333333",
-        font_heading="'Helvetica Neue',Arial,sans-serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Inter','Helvetica Neue',Arial,sans-serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap",
     ),
     "yellow_black": ThemeSpec(
         id="yellow_black",
@@ -45,8 +48,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#111111",
         accent_color="#111111",
         secondary_accent="#000000",
-        font_heading="'Georgia','Times New Roman',serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Inter','Georgia','Times New Roman',serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap",
     ),
     "black_orange": ThemeSpec(
         id="black_orange",
@@ -55,8 +59,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#111111",
         accent_color="#FF4800",
         secondary_accent="#111111",
-        font_heading="'Helvetica Neue','Arial Black',sans-serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Inter','Helvetica Neue','Arial Black',sans-serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap",
     ),
     "manga": ThemeSpec(
         id="manga",
@@ -65,8 +70,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#111111",
         accent_color="#FFE600",
         secondary_accent="#111111",
-        font_heading="'Arial Black','Impact',sans-serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Bangers','Arial Black','Impact',sans-serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Bangers&family=Inter:wght@400;600&display=swap",
     ),
     "magazine": ThemeSpec(
         id="magazine",
@@ -75,8 +81,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#2B2B2B",
         accent_color="#7B3F3F",
         secondary_accent="#FFFFFF",
-        font_heading="'Georgia','Times New Roman',serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Playfair Display','Georgia','Times New Roman',serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@400;600&display=swap",
     ),
     "neo_retro_dev": ThemeSpec(
         id="neo_retro_dev",
@@ -85,8 +92,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#111111",
         accent_color="#FF2D88",
         secondary_accent="#FFE600",
-        font_heading="'Arial Black','Impact',sans-serif",
-        font_body="'Courier New',Courier,monospace",
+        font_heading="'Space Grotesk','Arial Black','Impact',sans-serif",
+        font_body="'Space Mono','Courier New',Courier,monospace",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Space+Mono&display=swap",
     ),
     "pink_street": ThemeSpec(
         id="pink_street",
@@ -95,8 +103,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#111111",
         accent_color="#FFFFFF",
         secondary_accent="#111111",
-        font_heading="'Arial Black','Impact',sans-serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Inter','Arial Black','Impact',sans-serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap",
     ),
     "mincho_handwritten": ThemeSpec(
         id="mincho_handwritten",
@@ -105,8 +114,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#111111",
         accent_color="#111111",
         secondary_accent="#FF4040",
-        font_heading="'Georgia','Times New Roman',serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Inter','Georgia','Times New Roman',serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap",
     ),
     "seminar_minimal": ThemeSpec(
         id="seminar_minimal",
@@ -115,8 +125,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#111111",
         accent_color="#E00000",
         secondary_accent="#333333",
-        font_heading="'Helvetica Neue',Arial,sans-serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Inter','Helvetica Neue',Arial,sans-serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap",
     ),
     "royal_blue_red": ThemeSpec(
         id="royal_blue_red",
@@ -125,8 +136,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#1A1A2E",
         accent_color="#C0392B",
         secondary_accent="#1A3A7A",
-        font_heading="'Georgia','Times New Roman',serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Inter','Georgia','Times New Roman',serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap",
     ),
     "studio_premium": ThemeSpec(
         id="studio_premium",
@@ -135,8 +147,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#1D1D1F",
         accent_color="#8D59E9",
         secondary_accent="#EBE021",
-        font_heading="'Helvetica Neue',Arial,sans-serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Inter','Helvetica Neue',Arial,sans-serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap",
     ),
     "sports": ThemeSpec(
         id="sports",
@@ -145,8 +158,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#FFFFFF",
         accent_color="#CCFF00",
         secondary_accent="#FF4500",
-        font_heading="'Impact','Arial Black',sans-serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Oswald','Impact','Arial Black',sans-serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Oswald:wght@600;700&family=Inter:wght@400;600&display=swap",
     ),
     "classic_pop": ThemeSpec(
         id="classic_pop",
@@ -155,8 +169,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#FFFFFF",
         accent_color="#00FFCC",
         secondary_accent="#FFE600",
-        font_heading="'Helvetica Neue','Arial Black',sans-serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Inter','Helvetica Neue','Arial Black',sans-serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap",
     ),
     "tech_neon": ThemeSpec(
         id="tech_neon",
@@ -165,8 +180,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#333333",
         accent_color="#DFFF00",
         secondary_accent="#333333",
-        font_heading="'Georgia','Times New Roman',serif",
-        font_body="'Courier New',Courier,monospace",
+        font_heading="'Inter','Georgia','Times New Roman',serif",
+        font_body="'IBM Plex Mono','Courier New',Courier,monospace",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap",
     ),
     "digital_neo_pop": ThemeSpec(
         id="digital_neo_pop",
@@ -175,8 +191,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#111111",
         accent_color="#FF2D7A",
         secondary_accent="#00D4FF",
-        font_heading="'Arial Black','Impact',sans-serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Inter','Arial Black','Impact',sans-serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap",
     ),
     "anti_gravity": ThemeSpec(
         id="anti_gravity",
@@ -185,8 +202,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#1A1A1A",
         accent_color="#4A9EE8",
         secondary_accent="#A78BFA",
-        font_heading="'Helvetica Neue',Arial,sans-serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Inter','Helvetica Neue',Arial,sans-serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap",
     ),
     "deformed_persona": ThemeSpec(
         id="deformed_persona",
@@ -195,8 +213,9 @@ THEMES: Dict[str, ThemeSpec] = {
         text_color="#2B2B2B",
         accent_color="#7EB8A0",
         secondary_accent="#D4A574",
-        font_heading="'Helvetica Neue',Arial,sans-serif",
-        font_body="'Helvetica Neue',Arial,sans-serif",
+        font_heading="'Inter','Helvetica Neue',Arial,sans-serif",
+        font_body="'Inter','Helvetica Neue',Arial,sans-serif",
+        google_fonts_url="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap",
     ),
 }
 

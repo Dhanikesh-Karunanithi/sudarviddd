@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import base64
 import os
+import random
 import re
 import sys
+import time
 from typing import Callable, List, Optional
 
 import requests
 
+from .themes import get_theme
 from .types import GenerationConfig, SlideContent, ThemeId
 
 
@@ -135,6 +138,35 @@ def _fit_dim_to_model_constraints(value: int) -> int:
     return v
 
 
+def _hex_to_rgb(color: str) -> tuple[int, int, int]:
+    c = (color or "#808080").strip().lstrip("#")
+    if len(c) == 3:
+        c = "".join(ch * 2 for ch in c)
+    return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16))
+
+
+def _generate_placeholder_image(output_path: str, slide_title: str, theme_id: ThemeId) -> None:
+    """Minimal on-theme PNG when the image API fails after retries."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    spec = get_theme(theme_id.value)
+    w, h = 1920, 1080
+    bg = _hex_to_rgb(spec.bg_color)
+    accent = _hex_to_rgb(spec.accent_color)
+    fg = _hex_to_rgb(spec.text_color)
+    img = Image.new("RGB", (w, h), bg)
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([48, 48, w - 48, h - 48], outline=accent, width=10)
+    label = (slide_title or "Slide")[:100]
+    try:
+        font = ImageFont.truetype("arial.ttf", 44)
+    except OSError:
+        font = ImageFont.load_default()
+    draw.text((100, 100), label, fill=fg, font=font)
+    img.save(output_path)
+
+
 def build_image_prompt(theme_id: ThemeId, base_prompt: str) -> str:
     cleaned = _sanitize_image_prompt(base_prompt)
     if not cleaned:
@@ -182,6 +214,10 @@ class ImageGenerator:
     ) -> List[SlideContent]:
         updated: List[SlideContent] = []
         total = len(slides)
+        job_seed = random.randint(1, 2**31 - 1)
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        url = "https://api.together.xyz/v1/images/generations"
+
         for idx, slide in enumerate(slides, start=1):
             slide.image_path = None
             if getattr(slide, "visual_template", None) == "none":
@@ -194,7 +230,12 @@ class ImageGenerator:
                 config.theme,
                 slide.image_prompt or f"visual illustration for: {slide.title}",
             )
-            try:
+            filename = f"slide_{slide.index:02d}.png"
+            out_path = os.path.join(self.output_dir, filename)
+
+            ok = False
+            last_err: Optional[Exception] = None
+            for attempt in range(3):
                 payload: dict = {
                     "model": self.model,
                     "prompt": prompt,
@@ -202,39 +243,51 @@ class ImageGenerator:
                     "width": _fit_dim_to_model_constraints(config.video_size.width),
                     "height": _fit_dim_to_model_constraints(config.video_size.height),
                     "n": 1,
+                    "seed": (job_seed + slide.index) % (2**31),
                 }
-
                 steps = _image_steps_for_model(self.model)
                 if steps is not None:
                     payload["steps"] = steps
 
-                headers = {"Authorization": f"Bearer {self.api_key}"}
-                resp = requests.post(
-                    "https://api.together.xyz/v1/images/generations",
-                    headers=headers,
-                    json=payload,
-                    timeout=120,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                data0 = (data.get("data") or [{}])[0]
+                try:
+                    resp = requests.post(url, headers=headers, json=payload, timeout=120)
+                    if resp.status_code >= 400:
+                        err_body = (resp.text or "")[:300]
+                        if "seed" in err_body.lower() or resp.status_code == 422:
+                            payload.pop("seed", None)
+                            resp = requests.post(url, headers=headers, json=payload, timeout=120)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    data0 = (data.get("data") or [{}])[0]
 
-                filename = f"slide_{slide.index:02d}.png"
-                out_path = os.path.join(self.output_dir, filename)
+                    if "url" in data0 and data0["url"]:
+                        self._download_to_path(data0["url"], out_path)
+                    elif "b64_json" in data0 and data0["b64_json"]:
+                        self._save_b64_to_path(data0["b64_json"], out_path)
+                    else:
+                        raise RuntimeError(f"Unexpected Together images response shape: {data0.keys()}")
 
-                if "url" in data0 and data0["url"]:
-                    self._download_to_path(data0["url"], out_path)
-                elif "b64_json" in data0 and data0["b64_json"]:
-                    self._save_b64_to_path(data0["b64_json"], out_path)
-                else:
-                    raise RuntimeError(f"Unexpected Together images response shape: {data0.keys()}")
+                    slide.image_path = out_path
+                    ok = True
+                    break
+                except Exception as e:
+                    last_err = e
+                    if attempt < 2:
+                        time.sleep(2**attempt)
 
-                slide.image_path = out_path
-            except Exception as e:
+            if not ok:
                 print(
-                    f"[SudarVid] WARNING: Image generation failed for slide {slide.index}: {e}",
+                    f"[SudarVid] WARNING: Image gen failed for slide {slide.index} after 3 attempts: {last_err}",
                     file=sys.stderr,
                 )
+                try:
+                    _generate_placeholder_image(out_path, slide.title, config.theme)
+                    slide.image_path = out_path
+                except Exception as pe:
+                    print(
+                        f"[SudarVid] WARNING: Placeholder image failed for slide {slide.index}: {pe}",
+                        file=sys.stderr,
+                    )
             if progress_callback:
                 progress_callback(idx, total)
             updated.append(slide)

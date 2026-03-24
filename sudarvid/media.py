@@ -14,11 +14,15 @@ import edge_tts
 
 from .types import GenerationConfig, SlideContent
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 VOICE_MAP = {
     "en": "en-US-AriaNeural",
     "en-us": "en-US-AriaNeural",
+    "en-male": "en-US-GuyNeural",
     "en-uk": "en-GB-SoniaNeural",
+    "en-uk-male": "en-GB-RyanNeural",
+    "en-au": "en-AU-NatashaNeural",
     "ja": "ja-JP-NanamiNeural",
     "zh": "zh-CN-XiaoxiaoNeural",
     "ko": "ko-KR-SunHiNeural",
@@ -27,11 +31,46 @@ VOICE_MAP = {
     "es": "es-ES-ElviraNeural",
     "pt": "pt-BR-FranciscaNeural",
     "hi": "hi-IN-SwaraNeural",
+    "ta": "ta-IN-PallaviNeural",
+    "te": "te-IN-ShrutiNeural",
+    "ml": "ml-IN-SobhanaNeural",
+    "bn": "bn-IN-TanishaaNeural",
+}
+
+# Bundled background loops (static/music/). See static/music/README.md — WAV sources, ffmpeg muxes to MP3.
+THEME_MUSIC_MAP = {
+    "sports": "music/loop_energetic.wav",
+    "classic_pop": "music/loop_energetic.wav",
+    "digital_neo_pop": "music/loop_energetic.wav",
+    "pink_street": "music/loop_energetic.wav",
+    "neo_retro_dev": "music/loop_retro.wav",
+    "tech_neon": "music/loop_retro.wav",
+    "seminar_minimal": "music/loop_ambient.wav",
+    "anti_gravity": "music/loop_ambient.wav",
+    "sharp_minimalism": "music/loop_ambient.wav",
+    "studio_premium": "music/loop_ambient.wav",
+    "magazine": "music/loop_soft.wav",
+    "royal_blue_red": "music/loop_soft.wav",
+    "manga": "music/loop_soft.wav",
+    "modern_newspaper": "music/loop_soft.wav",
+    "yellow_black": "music/loop_energetic.wav",
+    "black_orange": "music/loop_energetic.wav",
+    "mincho_handwritten": "music/loop_soft.wav",
+    "deformed_persona": "music/loop_soft.wav",
 }
 
 
-def resolve_voice(language: str) -> str:
+def resolve_voice(language: str, voice_override: Optional[str] = None) -> str:
+    if voice_override and str(voice_override).strip():
+        return str(voice_override).strip()
     return VOICE_MAP.get(language.lower(), "en-US-AriaNeural")
+
+
+def bundled_music_source_path(theme_id: str) -> Optional[str]:
+    """Absolute path to a bundled MP3 under static/music/, or None if missing."""
+    rel = THEME_MUSIC_MAP.get(theme_id, "music/loop_ambient.wav")
+    p = REPO_ROOT / "static" / rel
+    return str(p) if p.is_file() else None
 
 
 async def _synthesize_slide(text: str, output_path: str, voice: str) -> None:
@@ -39,9 +78,14 @@ async def _synthesize_slide(text: str, output_path: str, voice: str) -> None:
     await communicate.save(output_path)
 
 
-async def synthesize_all_slides(slides: List[SlideContent], audio_dir: str, language: str) -> List[str]:
+async def synthesize_all_slides(
+    slides: List[SlideContent],
+    audio_dir: str,
+    language: str,
+    voice_override: Optional[str] = None,
+) -> List[str]:
     os.makedirs(audio_dir, exist_ok=True)
-    voice = resolve_voice(language)
+    voice = resolve_voice(language, voice_override)
     tasks = []
     paths: List[str] = []
     for slide in slides:
@@ -52,13 +96,18 @@ async def synthesize_all_slides(slides: List[SlideContent], audio_dir: str, lang
     return paths
 
 
-async def synthesize_deck_voiceover(slides: List[SlideContent], output_path: str, language: str) -> None:
+async def synthesize_deck_voiceover(
+    slides: List[SlideContent],
+    output_path: str,
+    language: str,
+    voice_override: Optional[str] = None,
+) -> None:
     """
     Synthesize one combined voiceover file without using ffmpeg concatenation.
     This is used for HTML-only preview when ffmpeg/ffprobe are missing.
     """
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    voice = resolve_voice(language)
+    voice = resolve_voice(language, voice_override)
     parts: List[str] = []
     for slide in slides:
         t = slide.narration or slide.title
@@ -139,12 +188,10 @@ def compute_slide_durations(
         # Simple speech-rate heuristic: words per minute -> seconds per word.
         words = re.findall(r"[A-Za-z0-9']+", text or "")
         word_count = max(1, len(words))
-        wpm = 150.0
+        wpm = 170.0
         seconds = word_count * (60.0 / wpm)
-        # Add a small constant for natural pauses and clipping.
-        seconds += 0.8
-        # Keep durations within sane bounds so the deck doesn’t become unusably fast/slow.
-        return max(2.0, min(seconds, 12.0))
+        seconds += 0.5
+        return max(3.0, min(seconds, 30.0))
 
     for i, slide in enumerate(slides):
         if per_slide_tts_paths and i < len(per_slide_tts_paths):
@@ -305,6 +352,8 @@ def build_full_video(
     html_path: str,
     output_dir: str,
     custom_music_path: Optional[str] = None,
+    existing_voiceover_path: Optional[str] = None,
+    existing_per_slide_tts: Optional[List[str]] = None,
 ) -> str:
     audio_dir = os.path.join(output_dir, "audio")
     frames_dir = os.path.join(output_dir, "frames")
@@ -318,17 +367,36 @@ def build_full_video(
     music_path: Optional[str] = None
 
     if config.include_tts:
-        per_slide_tts = asyncio.run(synthesize_all_slides(slides, audio_dir, config.language))
-        voiceover_path = os.path.join(audio_dir, "voiceover.mp3")
-        concatenate_audio(per_slide_tts, voiceover_path)
+        reuse = (
+            existing_voiceover_path
+            and existing_per_slide_tts
+            and os.path.isfile(existing_voiceover_path)
+            and len(existing_per_slide_tts) == len(slides)
+            and all(os.path.isfile(p) for p in existing_per_slide_tts)
+        )
+        if reuse:
+            voiceover_path = existing_voiceover_path
+            per_slide_tts = existing_per_slide_tts
+        else:
+            per_slide_tts = asyncio.run(
+                synthesize_all_slides(slides, audio_dir, config.language, config.voice_override)
+            )
+            voiceover_path = os.path.join(audio_dir, "voiceover.mp3")
+            concatenate_audio(per_slide_tts, voiceover_path)
 
     slides = compute_slide_durations(slides, per_slide_tts_paths=per_slide_tts, padding_seconds=1.2)
     total_duration = sum(s.duration_seconds for s in slides)
 
-    if config.include_music and custom_music_path:
-        # If provided, just use the given path; caller can handle looping externally.
+    music_src = custom_music_path
+    if config.include_music and not music_src:
+        music_src = bundled_music_source_path(config.theme.value)
+
+    if config.include_music and music_src and os.path.isfile(music_src):
         music_path = os.path.join(audio_dir, "music.mp3")
-        subprocess.run(["ffmpeg", "-y", "-i", custom_music_path, "-t", str(total_duration + 2.0), music_path], check=True)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", music_src, "-t", str(total_duration + 2.0), music_path],
+            check=True,
+        )
 
     frame_paths = capture_slide_frames(
         html_path=html_path,

@@ -55,6 +55,8 @@ def load_config(path: str) -> GenerationConfig:
         difficulty=data.get("difficulty"),
         source_notes=data.get("source_notes"),
         constraints=data.get("constraints"),
+        persona=data.get("persona"),
+        voice_override=data.get("voice_override"),
     )
 
 
@@ -130,6 +132,15 @@ def _relpath_posix(path: str, base_dir: str) -> str:
     return Path(path).resolve().relative_to(Path(base_dir).resolve()).as_posix()
 
 
+def _apply_target_duration_seconds(slides: List[SlideContent], target: float) -> None:
+    """Scale per-slide durations toward a target total (after measured/estimated durations exist)."""
+    actual = sum(s.duration_seconds for s in slides)
+    scale = float(target) / max(actual, 1.0)
+    if 0.5 < scale < 2.0:
+        for s in slides:
+            s.duration_seconds = max(3.0, s.duration_seconds * scale)
+
+
 def generate_video(
     config_path: Optional[str] = None,
     output_dir: str = "output",
@@ -165,22 +176,28 @@ def generate_video(
         if s.image_path:
             s.image_path = _relpath_posix(s.image_path, output_dir)
 
-    # For an HTML preview with synchronized audio, we need the voiceover + slide durations
-    # before rendering `slides.html`. This also allows HTML-only runs when ffmpeg/ffprobe
-    # are missing (duration estimation uses a fallback when ffprobe fails).
-    if config.output_html and config.include_tts:
+    voiceover_path: Optional[str] = None
+    per_slide_tts: Optional[List[str]] = None
+
+    # Voiceover + per-slide durations before rendering HTML or encoding MP4.
+    if config.include_tts and (config.output_html or config.output_mp4):
         report("audio", {"message": "Generating voiceover"})
         audio_dir = os.path.join(output_dir, "audio")
-        per_slide_tts = asyncio.run(synthesize_all_slides(slides, audio_dir, config.language))
+        per_slide_tts = asyncio.run(
+            synthesize_all_slides(slides, audio_dir, config.language, config.voice_override)
+        )
         voiceover_path = os.path.join(audio_dir, "voiceover.mp3")
         ffmpeg_exists = bool(shutil.which("ffmpeg"))
-        # Empty per-slide list (shouldn't happen if slides exist) would make ffmpeg concat fail.
         if ffmpeg_exists and per_slide_tts:
             concatenate_audio(per_slide_tts, voiceover_path)
         else:
-            # HTML-only preview: create a single voiceover file without ffmpeg.
-            asyncio.run(synthesize_deck_voiceover(slides, voiceover_path, config.language))
+            asyncio.run(
+                synthesize_deck_voiceover(slides, voiceover_path, config.language, config.voice_override)
+            )
         compute_slide_durations(slides, per_slide_tts_paths=per_slide_tts, padding_seconds=1.2)
+
+    if config.target_duration_seconds is not None:
+        _apply_target_duration_seconds(slides, float(config.target_duration_seconds))
 
     output_files: List[str] = []
 
@@ -200,7 +217,14 @@ def generate_video(
             manifest_path = write_slides_manifest(output_dir, slides)
             output_files.append(manifest_path)
         report("rendering_video", {"message": "Rendering MP4"})
-        mp4_path = build_full_video(config, slides, html_path=html_path, output_dir=output_dir)
+        mp4_path = build_full_video(
+            config,
+            slides,
+            html_path=html_path,
+            output_dir=output_dir,
+            existing_voiceover_path=voiceover_path,
+            existing_per_slide_tts=per_slide_tts,
+        )
         output_files.append(mp4_path)
 
     return output_files

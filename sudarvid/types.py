@@ -77,4 +77,8 @@ class GenerationConfig:
     difficulty: Optional[str] = None
     source_notes: Optional[str] = None
     constraints: Optional[str] = None
+    # Narrator/teacher voice (not the subject matter). When set, all slide copy and narration use this persona.
+    persona: Optional[str] = None
+    # edge-tts voice name, e.g. en-US-GuyNeural; when None, language default applies.
+    voice_override: Optional[str] = None
 

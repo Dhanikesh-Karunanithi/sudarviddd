@@ -1,7 +1,7 @@
 const app = document.getElementById("app");
 
 function isPreviewRoute() {
-  return window.location.pathname.startsWith("/preview/");
+  return window.location.pathname.startsWith("/v/");
 }
 
 function getPreviewJobId() {
@@ -147,7 +147,7 @@ async function renderHome() {
       appendStatus(`status: ${payload.status}`);
       if (payload.status === "done") {
         stream.close();
-        window.location.assign(`/preview/${encodeURIComponent(data.job_id)}`);
+        window.location.assign(`/v/${encodeURIComponent(data.job_id)}`);
       }
       if (payload.status === "error") {
         stream.close();

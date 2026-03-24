@@ -20,6 +20,10 @@ dist/
 # Output and generated assets
 output/
 
+# Logs and local DB
+*.log
+*.db
+
 # IDE / OS
 .idea/
 .vscode/

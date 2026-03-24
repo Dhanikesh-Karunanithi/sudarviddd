@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from datetime import datetime, timezone
@@ -15,7 +16,7 @@ from typing import Dict, List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
@@ -41,7 +42,7 @@ app.add_middleware(
 )
 
 DEBUG_SESSION_ID = "5d97eb"
-DEBUG_LOG_PATH = Path(__file__).resolve().parents[1] / "debug-5d97eb.log"
+DEBUG_LOG_PATH = Path(os.environ.get("SUDARVID_LOG_DIR", tempfile.gettempdir())).resolve() / f"debug-{DEBUG_SESSION_ID}.log"
 
 
 def _debug_log(
@@ -210,6 +211,9 @@ def _collect_output_files(output_dir: str) -> List[str]:
         if rel_posix in ("video/output.mp4", "audio/voiceover.mp3", "audio/music.mp3"):
             found.append(rel_posix)
             continue
+        if "assets" in p.parts and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            found.append(rel_posix)
+            continue
 
     return sorted(set(found))
 
@@ -313,6 +317,22 @@ class GenerateRequest(BaseModel):
         description="What to include, avoid, or terminology limits.",
         max_length=8000,
     )
+    persona: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Named character or voice style for all narration and slide copy (the teacher/narrator, not the topic).",
+    )
+    voice_override: Optional[str] = Field(
+        None,
+        max_length=80,
+        description="edge-tts voice name, e.g. en-US-GuyNeural (overrides language default).",
+    )
+    target_duration_seconds: Optional[float] = Field(
+        None,
+        ge=10.0,
+        le=7200.0,
+        description="Optional target total deck duration; slide timings scale toward this after audio is measured.",
+    )
 
     @field_validator("theme")
     @classmethod
@@ -348,6 +368,9 @@ class GenerateRequest(BaseModel):
             difficulty=self.difficulty,
             source_notes=self.source_notes,
             constraints=self.constraints,
+            persona=self.persona,
+            voice_override=self.voice_override,
+            target_duration_seconds=self.target_duration_seconds,
         )
 
 
@@ -392,6 +415,24 @@ async def generate(request: GenerateRequest, background_tasks: BackgroundTasks) 
     background_tasks.add_task(_run_job, job_id, config)
 
     return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/jobs", summary="List recent jobs")
+async def list_jobs(limit: int = 20, offset: int = 0) -> list:
+    with _db_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, status, created_at, updated_at, error FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+    return [{k: r[k] for k in r.keys()} for r in rows]
+
+
+@app.get("/preview/{job_id}", summary="Open the generated slide deck (redirect to rendered HTML)")
+async def preview_job_deck(job_id: str) -> RedirectResponse:
+    job = _get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+    return RedirectResponse(url=f"/render/{job_id}/slides.html")
 
 
 @app.get("/status/{job_id}", summary="Check job status")
@@ -549,5 +590,5 @@ async def health() -> dict:
 
 
 # SPA: register API routes above, then serve `frontend/` (index.html + assets).
-# html=True returns index.html for missing paths so `/preview/<id>` works client-side.
+# html=True returns index.html for missing paths so `/v/<job_id>` (SPA preview) works client-side.
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

@@ -241,9 +241,21 @@
         p.catch(() => {
           useAudioClock = false;
           audioBlocked = true;
+          paused = true;
+          syncPlayButton();
           if (hint) {
-            hint.textContent = "Audio blocked by browser. Click Play again after interacting with the page.";
+            hint.textContent = "Space: play/pause · ← →: slides · Home/End: start/end";
           }
+          const overlay = document.createElement("div");
+          overlay.style.cssText =
+            "position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;cursor:pointer";
+          overlay.innerHTML =
+            '<div style="background:#fff;padding:2rem 3rem;border-radius:12px;font-size:1.4rem;font-weight:bold;box-shadow:0 8px 32px rgba(0,0,0,0.25);">▶ Click anywhere to play with audio</div>';
+          overlay.addEventListener("click", () => {
+            overlay.remove();
+            play();
+          });
+          document.body.appendChild(overlay);
         });
       }
     }
@@ -409,9 +421,6 @@
       };
       audio.addEventListener("playing", onPlaying, { once: true });
       tryPlayAudioAt(0);
-      if (audioBlocked) {
-        paused = true;
-      }
     }
     if (!paused) {
       syncPlayButton();
