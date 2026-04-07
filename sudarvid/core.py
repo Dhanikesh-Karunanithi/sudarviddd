@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import shutil
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -57,6 +58,7 @@ def load_config(path: str) -> GenerationConfig:
         constraints=data.get("constraints"),
         persona=data.get("persona"),
         voice_override=data.get("voice_override"),
+        image_model=data.get("image_model"),
     )
 
 
@@ -117,6 +119,7 @@ def write_slides_manifest(output_dir: str, slides: List[SlideContent]) -> str:
         {
             "index": s.index,
             "title": s.title,
+            "narration": s.narration,
             "layout_kind": s.layout_kind,
             "visual_template": getattr(s, "visual_template", "full_bleed_bg"),
             "duration_seconds": s.duration_seconds,
@@ -130,6 +133,41 @@ def write_slides_manifest(output_dir: str, slides: List[SlideContent]) -> str:
 
 def _relpath_posix(path: str, base_dir: str) -> str:
     return Path(path).resolve().relative_to(Path(base_dir).resolve()).as_posix()
+
+
+def _inject_bookend_slides(config: GenerationConfig, slides: List[SlideContent]) -> List[SlideContent]:
+    """Prepend intro and append outro slides (fixed ~2s each, no images)."""
+    if not slides:
+        return slides
+    topic = (config.topic or "Presentation").strip() or "Presentation"
+    intro = SlideContent(
+        index=0,
+        title=topic[:200],
+        bullets=[],
+        narration="Let's begin.",
+        image_prompt="",
+        image_path=None,
+        duration_seconds=2.0,
+        layout_kind="intro",
+        visual_template="none",
+        subtitle=None,
+    )
+    shifted: List[SlideContent] = []
+    for j, s in enumerate(slides):
+        shifted.append(replace(s, index=j + 1))
+    outro = SlideContent(
+        index=len(shifted) + 1,
+        title="SudarVid",
+        bullets=[],
+        narration="Thanks for watching.",
+        image_prompt="",
+        image_path=None,
+        duration_seconds=2.0,
+        layout_kind="outro",
+        visual_template="none",
+        subtitle=None,
+    )
+    return [intro] + shifted + [outro]
 
 
 def _apply_target_duration_seconds(slides: List[SlideContent], target: float) -> None:
@@ -159,9 +197,10 @@ def generate_video(
     planner = ContentPlanner(api_key=together_api_key)
     report("planning", {"message": "Planning slides"})
     slides = planner.plan_slides(config)
+    slides = _inject_bookend_slides(config, slides)
 
     images_dir = os.path.join(output_dir, "assets", "images")
-    image_gen = ImageGenerator(api_key=together_api_key, output_dir=images_dir)
+    image_gen = ImageGenerator(api_key=together_api_key, model=config.image_model, output_dir=images_dir)
     report("images_start", {"message": "Generating images", "total": len(slides)})
     slides = image_gen.generate_for_slides(
         config,
@@ -194,9 +233,12 @@ def generate_video(
             asyncio.run(
                 synthesize_deck_voiceover(slides, voiceover_path, config.language, config.voice_override)
             )
-        compute_slide_durations(slides, per_slide_tts_paths=per_slide_tts, padding_seconds=1.2)
+        compute_slide_durations(slides, per_slide_tts_paths=per_slide_tts)
 
-    if config.target_duration_seconds is not None:
+    # Scaling slide times breaks sync with the pre-rendered voiceover MP3; skip when TTS is on.
+    if config.target_duration_seconds is not None and not (
+        config.include_tts and per_slide_tts
+    ):
         _apply_target_duration_seconds(slides, float(config.target_duration_seconds))
 
     output_files: List[str] = []
@@ -217,15 +259,23 @@ def generate_video(
             manifest_path = write_slides_manifest(output_dir, slides)
             output_files.append(manifest_path)
         report("rendering_video", {"message": "Rendering MP4"})
-        mp4_path = build_full_video(
-            config,
-            slides,
-            html_path=html_path,
-            output_dir=output_dir,
-            existing_voiceover_path=voiceover_path,
-            existing_per_slide_tts=per_slide_tts,
-        )
-        output_files.append(mp4_path)
+        try:
+            mp4_path = build_full_video(
+                config,
+                slides,
+                html_path=html_path,
+                output_dir=output_dir,
+                existing_voiceover_path=voiceover_path,
+                existing_per_slide_tts=per_slide_tts,
+            )
+            output_files.append(mp4_path)
+        except Exception as e:
+            # Slides, images, and narration are already on disk; MP4 is best-effort.
+            print(f"[SudarVid] MP4 encoding failed (slide deck is still available): {e}")
+            report(
+                "video_failed",
+                {"message": str(e), "nonfatal": True},
+            )
 
     return output_files
 

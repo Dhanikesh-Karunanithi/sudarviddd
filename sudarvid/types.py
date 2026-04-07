@@ -47,7 +47,7 @@ class SlideContent:
     image_prompt: str
     image_path: Optional[str] = None
     duration_seconds: float = 5.0
-    # Layout / learning UX (see content_planner JSON schema)
+    # Layout / learning UX (see content_planner JSON schema). intro/outro are injected in core.
     layout_kind: str = "standard"
     # LLM-selected frame: where the generated image appears (HTML templates).
     visual_template: str = "full_bleed_bg"
@@ -55,6 +55,10 @@ class SlideContent:
     learning_point: Optional[str] = None
     big_stat: Optional[str] = None
     stat_caption: Optional[str] = None
+    # Optional word-level caption timing aligned to per-slide TTS audio.
+    # When present, caption_words[i] is spoken starting at caption_times_ms[i] (milliseconds from slide start).
+    caption_words: Optional[List[str]] = None
+    caption_times_ms: Optional[List[int]] = None
 
 
 @dataclass
@@ -81,4 +85,6 @@ class GenerationConfig:
     persona: Optional[str] = None
     # edge-tts voice name, e.g. en-US-GuyNeural; when None, language default applies.
     voice_override: Optional[str] = None
+    # Together image model id; when None, server/env default applies.
+    image_model: Optional[str] = None
 

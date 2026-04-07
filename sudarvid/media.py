@@ -4,17 +4,51 @@ import asyncio
 import json
 import math
 import os
+import random
 import re
 import subprocess
 import tempfile
+import time
+import uuid
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 import edge_tts
+from edge_tts.exceptions import NoAudioReceived, UnexpectedResponse, WebSocketError
 
 from .types import GenerationConfig, SlideContent
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# #region agent log
+_AGENT_DEBUG_LOG = REPO_ROOT / "debug-7b3129.log"
+
+
+def _agent_debug(
+    location: str,
+    message: str,
+    hypothesis_id: str,
+    data: dict,
+    run_id: str = "pre-fix",
+) -> None:
+    try:
+        payload = {
+            "sessionId": "7b3129",
+            "id": f"log_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}",
+            "timestamp": int(time.time() * 1000),
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+        }
+        with open(_AGENT_DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+# #endregion
 
 VOICE_MAP = {
     "en": "en-US-AriaNeural",
@@ -36,6 +70,123 @@ VOICE_MAP = {
     "ml": "ml-IN-SobhanaNeural",
     "bn": "bn-IN-TanishaaNeural",
 }
+
+# Keep in sync with silence inserted between per-slide clips in concatenate_audio.
+TTS_SILENCE_BETWEEN_MS = 400
+
+# Short line for voice preview samples (Edge-tts).
+_TTS_PREVIEW_LINE = "Hello — this is a quick SudarVid voice preview."
+
+# Curated Edge voices for the UI (id must be valid for edge-tts).
+CURATED_TTS_VOICES: List[dict] = [
+    {"id": "en-US-AriaNeural", "label": "English (US) — Aria", "locale": "en-US"},
+    {"id": "en-US-JennyNeural", "label": "English (US) — Jenny", "locale": "en-US"},
+    {"id": "en-US-GuyNeural", "label": "English (US) — Guy", "locale": "en-US"},
+    {"id": "en-US-EricNeural", "label": "English (US) — Eric", "locale": "en-US"},
+    {"id": "en-US-DavisNeural", "label": "English (US) — Davis", "locale": "en-US"},
+    {"id": "en-US-JaneNeural", "label": "English (US) — Jane", "locale": "en-US"},
+    {"id": "en-US-JasonNeural", "label": "English (US) — Jason", "locale": "en-US"},
+    {"id": "en-US-NancyNeural", "label": "English (US) — Nancy", "locale": "en-US"},
+    {"id": "en-US-TonyNeural", "label": "English (US) — Tony", "locale": "en-US"},
+    {"id": "en-GB-SoniaNeural", "label": "English (UK) — Sonia", "locale": "en-GB"},
+    {"id": "en-GB-RyanNeural", "label": "English (UK) — Ryan", "locale": "en-GB"},
+    {"id": "en-GB-LibbyNeural", "label": "English (UK) — Libby", "locale": "en-GB"},
+    {"id": "en-GB-MaisieNeural", "label": "English (UK) — Maisie", "locale": "en-GB"},
+    {"id": "en-AU-NatashaNeural", "label": "English (AU) — Natasha", "locale": "en-AU"},
+    {"id": "en-AU-WilliamNeural", "label": "English (AU) — William", "locale": "en-AU"},
+    {"id": "en-IN-NeerjaNeural", "label": "English (IN) — Neerja", "locale": "en-IN"},
+    {"id": "en-IN-PrabhatNeural", "label": "English (IN) — Prabhat", "locale": "en-IN"},
+    {"id": "de-DE-KatjaNeural", "label": "German — Katja", "locale": "de-DE"},
+    {"id": "de-DE-ConradNeural", "label": "German — Conrad", "locale": "de-DE"},
+    {"id": "de-DE-AmalaNeural", "label": "German — Amala", "locale": "de-DE"},
+    {"id": "fr-FR-DeniseNeural", "label": "French — Denise", "locale": "fr-FR"},
+    {"id": "fr-FR-HenriNeural", "label": "French — Henri", "locale": "fr-FR"},
+    {"id": "es-ES-ElviraNeural", "label": "Spanish — Elvira", "locale": "es-ES"},
+    {"id": "es-ES-AlvaroNeural", "label": "Spanish — Alvaro", "locale": "es-ES"},
+    {"id": "es-MX-DaliaNeural", "label": "Spanish (MX) — Dalia", "locale": "es-MX"},
+    {"id": "es-MX-JorgeNeural", "label": "Spanish (MX) — Jorge", "locale": "es-MX"},
+    {"id": "pt-BR-FranciscaNeural", "label": "Portuguese (BR) — Francisca", "locale": "pt-BR"},
+    {"id": "pt-BR-AntonioNeural", "label": "Portuguese (BR) — Antonio", "locale": "pt-BR"},
+    {"id": "it-IT-ElsaNeural", "label": "Italian — Elsa", "locale": "it-IT"},
+    {"id": "it-IT-DiegoNeural", "label": "Italian — Diego", "locale": "it-IT"},
+    {"id": "ja-JP-NanamiNeural", "label": "Japanese — Nanami", "locale": "ja-JP"},
+    {"id": "ja-JP-KeitaNeural", "label": "Japanese — Keita", "locale": "ja-JP"},
+    {"id": "zh-CN-XiaoxiaoNeural", "label": "Chinese — Xiaoxiao", "locale": "zh-CN"},
+    {"id": "zh-CN-YunxiNeural", "label": "Chinese — Yunxi", "locale": "zh-CN"},
+    {"id": "ko-KR-SunHiNeural", "label": "Korean — SunHi", "locale": "ko-KR"},
+    {"id": "ko-KR-InJoonNeural", "label": "Korean — InJoon", "locale": "ko-KR"},
+    {"id": "hi-IN-SwaraNeural", "label": "Hindi — Swara", "locale": "hi-IN"},
+    {"id": "hi-IN-MadhurNeural", "label": "Hindi — Madhur", "locale": "hi-IN"},
+    {"id": "ta-IN-PallaviNeural", "label": "Tamil — Pallavi", "locale": "ta-IN"},
+    {"id": "ta-IN-ValluvarNeural", "label": "Tamil — Valluvar", "locale": "ta-IN"},
+    {"id": "te-IN-ShrutiNeural", "label": "Telugu — Shruti", "locale": "te-IN"},
+    {"id": "te-IN-MohanNeural", "label": "Telugu — Mohan", "locale": "te-IN"},
+    {"id": "ml-IN-SobhanaNeural", "label": "Malayalam — Sobhana", "locale": "ml-IN"},
+    {"id": "ml-IN-MidhunNeural", "label": "Malayalam — Midhun", "locale": "ml-IN"},
+    {"id": "bn-IN-TanishaaNeural", "label": "Bengali — Tanishaa", "locale": "bn-IN"},
+    {"id": "bn-IN-BashkarNeural", "label": "Bengali — Bashkar", "locale": "bn-IN"},
+    {"id": "ar-SA-ZariyahNeural", "label": "Arabic — Zariyah", "locale": "ar-SA"},
+    {"id": "ar-SA-HamedNeural", "label": "Arabic — Hamed", "locale": "ar-SA"},
+    {"id": "nl-NL-FennaNeural", "label": "Dutch — Fenna", "locale": "nl-NL"},
+    {"id": "nl-NL-MaartenNeural", "label": "Dutch — Maarten", "locale": "nl-NL"},
+    {"id": "pl-PL-AgnieszkaNeural", "label": "Polish — Agnieszka", "locale": "pl-PL"},
+    {"id": "pl-PL-MarekNeural", "label": "Polish — Marek", "locale": "pl-PL"},
+    {"id": "ru-RU-SvetlanaNeural", "label": "Russian — Svetlana", "locale": "ru-RU"},
+    {"id": "ru-RU-DmitryNeural", "label": "Russian — Dmitry", "locale": "ru-RU"},
+    {"id": "tr-TR-EmelNeural", "label": "Turkish — Emel", "locale": "tr-TR"},
+    {"id": "tr-TR-AhmetNeural", "label": "Turkish — Ahmet", "locale": "tr-TR"},
+]
+
+
+def language_presets() -> List[dict]:
+    labels = {
+        "en": "English (default US)",
+        "en-us": "English (US)",
+        "en-male": "English (male preset)",
+        "en-uk": "English (UK)",
+        "en-uk-male": "English (UK male)",
+        "en-au": "English (Australia)",
+        "ja": "Japanese",
+        "zh": "Chinese (Mandarin)",
+        "ko": "Korean",
+        "fr": "French",
+        "de": "German",
+        "es": "Spanish",
+        "pt": "Portuguese (Brazil)",
+        "hi": "Hindi",
+        "ta": "Tamil",
+        "te": "Telugu",
+        "ml": "Malayalam",
+        "bn": "Bengali",
+    }
+    out: List[dict] = []
+    for key in sorted(VOICE_MAP.keys(), key=lambda k: (labels.get(k, k), k)):
+        out.append({"id": key, "label": labels.get(key, key), "default_voice": VOICE_MAP[key]})
+    return out
+
+
+_ALLOWED_VOICE_IDS = {v["id"] for v in CURATED_TTS_VOICES} | set(VOICE_MAP.values())
+
+
+def is_allowed_tts_voice(voice: str) -> bool:
+    v = (voice or "").strip()
+    if v in _ALLOWED_VOICE_IDS:
+        return True
+    # Allow any standard Edge neural id for power users.
+    if re.fullmatch(r"[a-z]{2}-[A-Z]{2}-[A-Za-z0-9]+Neural", v):
+        return True
+    return False
+
+
+def preview_audio_cache_path(voice: str) -> Path:
+    safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", voice.strip())
+    return REPO_ROOT / ".cache" / "tts_preview" / f"{safe}.mp3"
+
+
+async def synthesize_tts_preview_file(voice: str, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    communicate = edge_tts.Communicate(_TTS_PREVIEW_LINE, voice=voice.strip())
+    await communicate.save(str(output_path))
 
 # Bundled background loops (static/music/). See static/music/README.md — WAV sources, ffmpeg muxes to MP3.
 THEME_MUSIC_MAP = {
@@ -73,9 +224,112 @@ def bundled_music_source_path(theme_id: str) -> Optional[str]:
     return str(p) if p.is_file() else None
 
 
+# Microsoft Edge TTS often returns no audio when too many WebSocket sessions run at once.
+_TTS_MAX_CONCURRENT = 3
+_TTS_MAX_ATTEMPTS = 5
+_TTS_RETRY_EXCEPTIONS = (NoAudioReceived, WebSocketError, UnexpectedResponse)
+
+
+def _normalize_tts_text(text: str) -> str:
+    """
+    Edge TTS returns NoAudioReceived for some minimal inputs (e.g. a lone '.').
+    Require at least one alphanumeric character so synthesis always receives valid speech.
+    """
+    t = (text or "").strip() or " "
+    if any(ch.isalnum() for ch in t):
+        return t
+    return "This slide has no spoken narration."
+
+
 async def _synthesize_slide(text: str, output_path: str, voice: str) -> None:
-    communicate = edge_tts.Communicate(text, voice=voice)
-    await communicate.save(output_path)
+    """Call edge-tts with retries; empty narration becomes a minimal utterance."""
+    t = _normalize_tts_text(text)
+    last_err: Optional[Exception] = None
+    for attempt in range(_TTS_MAX_ATTEMPTS):
+        try:
+            communicate = edge_tts.Communicate(t, voice=voice)
+            await communicate.save(output_path)
+            return
+        except _TTS_RETRY_EXCEPTIONS as e:
+            last_err = e
+            if attempt >= _TTS_MAX_ATTEMPTS - 1:
+                break
+            delay = 0.75 * (2**attempt) + random.uniform(0, 0.35)
+            await asyncio.sleep(delay)
+    assert last_err is not None
+    # #region agent log
+    _agent_debug(
+        "media.py:_synthesize_slide",
+        "edge-tts failed after retries",
+        "H2",
+        {
+            "voice": voice,
+            "exc_type": type(last_err).__name__,
+            "exc_str": str(last_err)[:400],
+            "text_len": len(t),
+            "last_attempt_index": attempt,
+        },
+    )
+    # #endregion
+    raise last_err
+
+
+def _normalize_caption_word(w: str) -> str:
+    return re.sub(r"^[^\w']+|[^\w']+$", "", (w or "").strip()).lower()
+
+
+async def _synthesize_slide_with_word_times(
+    text: str, output_path: str, voice: str
+) -> tuple[list[str], list[int]]:
+    """
+    Stream edge-tts audio to disk and capture word-boundary timestamps.
+    Returns (words, times_ms), both aligned by index.
+    """
+    t = _normalize_tts_text(text)
+    # IMPORTANT: boundary defaults to SentenceBoundary; request WordBoundary for word-level timestamps.
+    communicate = edge_tts.Communicate(t, voice=voice, boundary="WordBoundary")
+    words: list[str] = []
+    times_ms: list[int] = []
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    # edge-tts yields events: audio bytes + word boundary metadata
+    with open(output_path, "wb") as f:
+        async for chunk in communicate.stream():
+            if not isinstance(chunk, dict):
+                continue
+            ctype = chunk.get("type") or chunk.get("Type") or ""
+            if ctype == "audio":
+                data = chunk.get("data") or chunk.get("Data")
+                if isinstance(data, (bytes, bytearray)):
+                    f.write(data)
+            elif ctype in ("WordBoundary", "wordBoundary", "word_boundary"):
+                # edge-tts commonly provides: offset (100ns units), duration, text, and/or text offset/length
+                off = chunk.get("offset") or chunk.get("Offset") or 0
+                try:
+                    off_ms = int(round(float(off) / 10000.0))
+                except Exception:
+                    off_ms = 0
+
+                w = chunk.get("text") or chunk.get("Text")
+                if not isinstance(w, str) or not w.strip():
+                    # Try substring extraction if the API gives character offsets
+                    toff = chunk.get("text_offset") or chunk.get("textOffset") or chunk.get("TextOffset")
+                    tlen = chunk.get("text_length") or chunk.get("textLength") or chunk.get("TextLength")
+                    if isinstance(toff, int) and isinstance(tlen, int) and tlen > 0:
+                        w = t[toff : toff + tlen]
+                if isinstance(w, str) and w.strip():
+                    words.append(w.strip())
+                    times_ms.append(max(0, off_ms))
+
+    # Filter out empty / punctuation-only tokens; keep times aligned
+    filtered_words: list[str] = []
+    filtered_times: list[int] = []
+    for w, ms in zip(words, times_ms):
+        if _normalize_caption_word(w):
+            filtered_words.append(w)
+            filtered_times.append(ms)
+
+    return filtered_words, filtered_times
 
 
 async def synthesize_all_slides(
@@ -86,13 +340,50 @@ async def synthesize_all_slides(
 ) -> List[str]:
     os.makedirs(audio_dir, exist_ok=True)
     voice = resolve_voice(language, voice_override)
-    tasks = []
+    # #region agent log
+    _agent_debug(
+        "media.py:synthesize_all_slides",
+        "tts batch start",
+        "H1",
+        {
+            "language": language,
+            "voice_override": voice_override,
+            "resolved_voice": voice,
+            "slide_count": len(slides),
+            "max_concurrent": _TTS_MAX_CONCURRENT,
+        },
+    )
+    # #endregion
+    sem = asyncio.Semaphore(_TTS_MAX_CONCURRENT)
     paths: List[str] = []
+    tasks = []
+
+    async def _one(slide: SlideContent, out_path: str) -> None:
+        async with sem:
+            # Try to capture word timings for subtitle alignment; if this fails,
+            # fall back to standard synthesis (still produces audio).
+            try:
+                w, ms = await _synthesize_slide_with_word_times(slide.narration or slide.title, out_path, voice)
+                if w and ms and len(w) == len(ms):
+                    slide.caption_words = w
+                    slide.caption_times_ms = ms
+            except Exception:
+                await _synthesize_slide(slide.narration or slide.title, out_path, voice)
+
     for slide in slides:
         p = os.path.join(audio_dir, f"slide_{slide.index:02d}_tts.mp3")
         paths.append(p)
-        tasks.append(_synthesize_slide(slide.narration or slide.title, p, voice))
+        tasks.append(asyncio.create_task(_one(slide, p)))
     await asyncio.gather(*tasks)
+    # #region agent log
+    _agent_debug(
+        "media.py:synthesize_all_slides",
+        "tts batch complete",
+        "H-verify",
+        {"slide_count": len(slides), "resolved_voice": voice},
+        run_id="post-fix",
+    )
+    # #endregion
     return paths
 
 
@@ -117,8 +408,7 @@ async def synthesize_deck_voiceover(
     if not text:
         text = " "
 
-    communicate = edge_tts.Communicate(text, voice=voice)
-    await communicate.save(output_path)
+    await _synthesize_slide(text, output_path, voice)
 
 
 def get_audio_duration(path: str) -> float:
@@ -156,7 +446,11 @@ def _create_silence(output_path: str, duration_ms: int) -> None:
     )
 
 
-def concatenate_audio(per_slide_paths: List[str], output_path: str, silence_between_ms: int = 400) -> str:
+def concatenate_audio(
+    per_slide_paths: List[str],
+    output_path: str,
+    silence_between_ms: int = TTS_SILENCE_BETWEEN_MS,
+) -> str:
     if not per_slide_paths:
         raise ValueError("No per-slide audio paths provided.")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -166,9 +460,10 @@ def concatenate_audio(per_slide_paths: List[str], output_path: str, silence_betw
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         concat_file = f.name
-        for p in per_slide_paths:
+        for i, p in enumerate(per_slide_paths):
             f.write(f"file '{os.path.abspath(p)}'\n")
-            f.write(f"file '{os.path.abspath(silence_path)}'\n")
+            if i < len(per_slide_paths) - 1:
+                f.write(f"file '{os.path.abspath(silence_path)}'\n")
 
     subprocess.run(
         ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_file, "-c", "copy", output_path],
@@ -182,10 +477,14 @@ def concatenate_audio(per_slide_paths: List[str], output_path: str, silence_betw
 def compute_slide_durations(
     slides: List[SlideContent],
     per_slide_tts_paths: Optional[List[str]] = None,
-    padding_seconds: float = 1.2,
+    silence_between_ms: int = TTS_SILENCE_BETWEEN_MS,
+    last_slide_tail_seconds: float = 0.0,
 ) -> List[SlideContent]:
+    """
+    Match each slide's on-screen duration to the concatenated voiceover timeline:
+    audio(segment_i) + silence between segments (except after the last).
+    """
     def estimate_duration_seconds(text: str) -> float:
-        # Simple speech-rate heuristic: words per minute -> seconds per word.
         words = re.findall(r"[A-Za-z0-9']+", text or "")
         word_count = max(1, len(words))
         wpm = 170.0
@@ -193,19 +492,21 @@ def compute_slide_durations(
         seconds += 0.5
         return max(3.0, min(seconds, 30.0))
 
+    n = len(slides)
+    gap_sec = silence_between_ms / 1000.0
+
     for i, slide in enumerate(slides):
         if per_slide_tts_paths and i < len(per_slide_tts_paths):
             p = per_slide_tts_paths[i]
             if os.path.exists(p):
                 try:
-                    slide.duration_seconds = get_audio_duration(p) + padding_seconds
-                    continue
+                    audio_sec = get_audio_duration(p)
                 except Exception:
-                    # If ffprobe is missing/unavailable, fall back to a text-based estimate.
-                    # This keeps HTML preview generation working even without ffmpeg tooling.
                     source_text = slide.narration or slide.title
-                    slide.duration_seconds = estimate_duration_seconds(source_text) + padding_seconds
-                    continue
+                    audio_sec = estimate_duration_seconds(source_text)
+                suffix = gap_sec if i < n - 1 else last_slide_tail_seconds
+                slide.duration_seconds = max(0.5, audio_sec + suffix)
+                continue
         slide.duration_seconds = 6.0
     return slides
 
@@ -216,7 +517,7 @@ def capture_slide_frames(
     frames_dir: str,
     width: int,
     height: int,
-    animation_settle_ms: int = 900,
+    animation_settle_ms: int = 1200,
 ) -> List[Tuple[str, float]]:
     # Future improvement:
     # Switch from screenshot-based sampling to Playwright video recording for
@@ -233,7 +534,13 @@ def capture_slide_frames(
     out: List[Tuple[str, float]] = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        exe = p.chromium.executable_path
+        if not exe or not os.path.exists(exe):
+            raise RuntimeError("Playwright Chromium is missing. Run: playwright install")
+        try:
+            browser = p.chromium.launch(headless=True)
+        except Exception as e:
+            raise RuntimeError("Playwright Chromium launch failed. Run: playwright install") from e
         page = browser.new_page(viewport={"width": width, "height": height})
         page.add_init_script("window.IS_CAPTURE = true;")
         page.goto(abs_html, wait_until="networkidle")
@@ -384,7 +691,7 @@ def build_full_video(
             voiceover_path = os.path.join(audio_dir, "voiceover.mp3")
             concatenate_audio(per_slide_tts, voiceover_path)
 
-    slides = compute_slide_durations(slides, per_slide_tts_paths=per_slide_tts, padding_seconds=1.2)
+    slides = compute_slide_durations(slides, per_slide_tts_paths=per_slide_tts)
     total_duration = sum(s.duration_seconds for s in slides)
 
     music_src = custom_music_path

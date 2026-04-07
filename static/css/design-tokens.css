@@ -1,0 +1,16 @@
+:root {
+  --apple-bg: #000000;
+  --apple-surface: rgba(22, 22, 24, 0.72);
+  --apple-glass: rgba(255, 255, 255, 0.06);
+  --apple-border: rgba(255, 255, 255, 0.12);
+  --apple-text-primary: #fafafa;
+  --apple-text-secondary: rgba(250, 250, 250, 0.55);
+  --apple-accent: #ffffff;
+  --apple-radius-sm: 10px;
+  --apple-radius-md: 18px;
+  --apple-radius-lg: 28px;
+  --apple-blur: blur(28px) saturate(160%);
+  --apple-font: "Manrope", -apple-system, "SF Pro Text", BlinkMacSystemFont, system-ui, sans-serif;
+  --apple-mono: "SF Mono", ui-monospace, monospace;
+  --apple-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+}

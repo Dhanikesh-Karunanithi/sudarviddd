@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sudar — Intro / Outro</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a0a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Georgia', serif;
+    gap: 32px;
+  }
+
+  .controls {
+    display: flex;
+    gap: 12px;
+    z-index: 10;
+  }
+
+  button {
+    background: transparent;
+    border: 1px solid rgba(245,245,245,0.25);
+    color: #f5f5f5;
+    padding: 8px 20px;
+    border-radius: 20px;
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    font-family: 'Georgia', serif;
+  }
+  button:hover { border-color: rgba(245,245,245,0.6); background: rgba(245,245,245,0.06); }
+  button.active { border-color: #f5f5f5; background: rgba(245,245,245,0.1); }
+
+  .scene-wrap {
+    position: relative;
+    width: 600px;
+    height: 400px;
+    background: #000;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  canvas {
+    display: block;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  /* Wordmark overlay — rendered in HTML over canvas for crisp text */
+  #wordmark {
+    position: absolute;
+    bottom: 88px;
+    left: 0; right: 0;
+    text-align: center;
+    pointer-events: none;
+  }
+
+  #wordmark .name {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    font-size: 15px;
+    font-weight: 400;
+    letter-spacing: 0.38em;
+    color: #f5f5f5;
+    text-transform: uppercase;
+    opacity: 0;
+  }
+
+  #wordmark .sub {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    font-size: 9.5px;
+    font-weight: 400;
+    letter-spacing: 0.55em;
+    color: rgba(245,245,245,0.42);
+    text-transform: uppercase;
+    margin-top: 5px;
+    opacity: 0;
+  }
+
+  .label {
+    font-family: 'Georgia', serif;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    color: rgba(245,245,245,0.28);
+    text-transform: uppercase;
+    text-align: center;
+  }
+
+  body.capture {
+    gap: 0;
+    overflow: hidden;
+  }
+
+  body.capture .controls,
+  body.capture .label {
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <button id="btn-intro" class="active" onclick="play('intro')">Intro</button>
+  <button id="btn-outro" onclick="play('outro')">Outro</button>
+</div>
+
+<div class="scene-wrap">
+  <canvas id="c" width="600" height="400"></canvas>
+  <div id="wordmark">
+    <div class="name" id="wm-name">Sudar</div>
+    <div class="sub" id="wm-sub">AI Learning Ecosystem</div>
+  </div>
+</div>
+
+<div class="label" id="scene-label">intro &nbsp;·&nbsp; 0.0s</div>
+
+<script>
+const cv = document.getElementById('c');
+const cx = cv.getContext('2d');
+const W = cv.width, H = cv.height, MX = W/2, MY = H/2;
+
+// ── Easings ──────────────────────────────────────────────────────────
+const easeInOutCubic = t => t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
+const easeInOutQuint = t => t<0.5 ? 16*t**5 : 1-Math.pow(-2*t+2,5)/2;
+const easeOutQuint   = t => 1 - Math.pow(1-t, 5);
+const easeInQuint    = t => t * t * t * t * t;
+const lerp = (a,b,t) => a+(b-a)*t;
+const clamp = (t,lo=0,hi=1) => Math.max(lo, Math.min(hi, t));
+const remap = (v,a,b) => clamp((v-a)/(b-a));
+
+// ── Draw helpers (same as original) ─────────────────────────────────
+function drawPill(px,py,pw,ph,pr,pa,withShadow) {
+  if (pa <= 0.004) return;
+  cx.save();
+  cx.globalAlpha = pa;
+  if (withShadow) {
+    cx.shadowColor = 'rgba(0,0,0,0.5)';
+    cx.shadowBlur  = 28;
+    cx.shadowOffsetY = 10;
+  }
+  cx.translate(px, py);
+  const r = Math.min(pr, pw/2, ph/2);
+  const x = -pw/2, y = -ph/2;
+  cx.beginPath();
+  cx.moveTo(x+r, y);
+  cx.lineTo(x+pw-r, y);  cx.arcTo(x+pw,y,   x+pw,y+r,   r);
+  cx.lineTo(x+pw,y+ph-r);cx.arcTo(x+pw,y+ph,x+pw-r,y+ph,r);
+  cx.lineTo(x+r,y+ph);   cx.arcTo(x,y+ph,   x,y+ph-r,   r);
+  cx.lineTo(x,y+r);      cx.arcTo(x,y,      x+r,y,      r);
+  cx.closePath();
+  cx.fillStyle = '#f5f5f5';
+  cx.fill();
+  cx.restore();
+}
+
+function drawAIStar(sx,sy,sz,sa) {
+  if (sa <= 0.004) return;
+  cx.save();
+  cx.globalAlpha = sa;
+  cx.translate(sx, sy);
+  const r = sz, c = r*0.12;
+  cx.beginPath();
+  cx.moveTo(0,-r);
+  cx.bezierCurveTo( c,-c,  c,-c,  r, 0);
+  cx.bezierCurveTo( c, c,  c, c,  0, r);
+  cx.bezierCurveTo(-c, c, -c, c, -r, 0);
+  cx.bezierCurveTo(-c,-c, -c,-c,  0,-r);
+  cx.closePath();
+  cx.fillStyle = '#000000';
+  cx.fill();
+  cx.restore();
+}
+
+function drawPlay(px,py,sz,pa) {
+  if (pa <= 0.004) return;
+  cx.save();
+  cx.globalAlpha = pa;
+  cx.translate(px, py);
+  cx.beginPath();
+  cx.moveTo(-sz*0.36, -sz*0.50);
+  cx.lineTo( sz*0.62,  0);
+  cx.lineTo(-sz*0.36,  sz*0.50);
+  cx.closePath();
+  cx.fillStyle = '#000000';
+  cx.fill();
+  cx.restore();
+}
+
+// ── Keyframe states ──────────────────────────────────────────────────
+const KF = {
+  // Nothing — used for fade-from-black entry
+  s0: { p1:{x:MX+22,y:MY-28,w:138,h:55,rx:27.5,a:0},
+        p2:{x:MX-22,y:MY+28,w:138,h:55,rx:27.5,a:0},
+        star:{sz:16,a:0}, play:{sz:24,a:0} },
+  // Split — two offset pills
+  s1: { p1:{x:MX+22,y:MY-28,w:138,h:55,rx:27.5,a:1},
+        p2:{x:MX-22,y:MY+28,w:138,h:55,rx:27.5,a:1},
+        star:{sz:16,a:1}, play:{sz:24,a:0} },
+  // Overlap
+  s2: { p1:{x:MX,y:MY-19,w:138,h:55,rx:27.5,a:1},
+        p2:{x:MX,y:MY+19,w:138,h:55,rx:27.5,a:1},
+        star:{sz:16,a:1}, play:{sz:24,a:0} },
+  // Merged round
+  s3: { p1:{x:MX,y:MY,w:152,h:82,rx:41,a:1},
+        p2:{x:MX,y:MY,w:152,h:82,rx:41,a:0},
+        star:{sz:16,a:1}, play:{sz:24,a:0} },
+  // Video / play state
+  s4: { p1:{x:MX,y:MY,w:162,h:100,rx:20,a:1},
+        p2:{x:MX,y:MY,w:162,h:100,rx:20,a:0},
+        star:{sz:16,a:0}, play:{sz:24,a:1} }
+};
+
+function iKF(A, B, t, posE, szE) {
+  posE = posE||easeInOutCubic; szE = szE||easeInOutCubic;
+  const pe = posE(clamp(t)), se = szE(clamp(t)), ae = easeInOutCubic(clamp(t));
+  return {
+    p1:{x:lerp(A.p1.x,B.p1.x,pe), y:lerp(A.p1.y,B.p1.y,pe),
+        w:lerp(A.p1.w,B.p1.w,se), h:lerp(A.p1.h,B.p1.h,se),
+        rx:lerp(A.p1.rx,B.p1.rx,se), a:lerp(A.p1.a,B.p1.a,ae)},
+    p2:{x:lerp(A.p2.x,B.p2.x,pe), y:lerp(A.p2.y,B.p2.y,pe),
+        w:lerp(A.p2.w,B.p2.w,se), h:lerp(A.p2.h,B.p2.h,se),
+        rx:lerp(A.p2.rx,B.p2.rx,se), a:lerp(A.p2.a,B.p2.a,ae)},
+    star:{sz:lerp(A.star.sz,B.star.sz,se), a:lerp(A.star.a,B.star.a,ae)},
+    play:{sz:lerp(A.play.sz,B.play.sz,se), a:lerp(A.play.a,B.play.a,ae)}
+  };
+}
+
+// ── Pulse beat helper ────────────────────────────────────────────────
+// Returns a quick scale pop value (1.0 → 1.06 → 1.0) around a beat time
+function beatScale(ms, beatTime, dur=220) {
+  const d = Math.abs(ms - beatTime);
+  if (d > dur) return 1;
+  const t = d / dur;
+  return 1 + 0.055 * Math.sin(t * Math.PI) * (1 - t);
+}
+
+// ── Wordmark fade helpers ────────────────────────────────────────────
+function setWordmark(nameAlpha, subAlpha) {
+  document.getElementById('wm-name').style.opacity = nameAlpha;
+  document.getElementById('wm-sub').style.opacity  = subAlpha;
+}
+
+// ── INTRO timeline (ms) ──────────────────────────────────────────────
+// 0       — black
+// 0–400   — fade in s0 → s1 (pills emerge from nothing)
+// 400–600 — hold s1
+// 600–1200— s1 → s2 (overlap)
+// 1200–1500—hold s2
+// 1500–2100—s2 → s3 (merge)
+// 2100–2400—hold s3
+// 2400–3000—s3 → s4 (video state)
+// 3000–4800—HOLD s4 with pulse beat at 3400 & 3900; wordmark fades in 3100–3600
+// Total: ~4800ms
+
+const INTRO_DUR = 4800;
+const OUTRO_DUR = 4600;
+
+const params = new URLSearchParams(window.location.search);
+const queryMode = (params.get('mode') || params.get('scene') || '').toLowerCase();
+const initialMode = queryMode === 'outro' ? 'outro' : 'intro';
+const captureMode = (
+  params.get('capture') === '1' ||
+  params.get('export') === '1' ||
+  window.IS_CAPTURE === true
+);
+
+if (captureMode) {
+  document.body.classList.add('capture');
+}
+
+function getIntroState(ms) {
+  let st, scale = 1, wmName = 0, wmSub = 0, logoOpacity = 1;
+
+  // Full-logo fade in for rendering pipeline.
+  logoOpacity = clamp(remap(ms, 0, 700));
+
+  if (ms < 400) {
+    // Emerge from black
+    st = iKF(KF.s0, KF.s1, remap(ms, 0, 400), easeOutQuint, easeOutQuint);
+  } else if (ms < 600) {
+    st = KF.s1;
+  } else if (ms < 1200) {
+    st = iKF(KF.s1, KF.s2, remap(ms, 600, 1200), easeInOutQuint, easeInOutQuint);
+  } else if (ms < 1500) {
+    st = KF.s2;
+  } else if (ms < 2100) {
+    st = iKF(KF.s2, KF.s3, remap(ms, 1500, 2100), easeInOutQuint, easeInOutQuint);
+  } else if (ms < 2400) {
+    st = KF.s3;
+  } else if (ms < 3000) {
+    st = iKF(KF.s3, KF.s4, remap(ms, 2400, 3000), easeInOutQuint, easeInOutQuint);
+  } else {
+    // Held s4 with beats
+    st = JSON.parse(JSON.stringify(KF.s4));
+    // Beat 1: 3400ms — logo pulse
+    // Beat 2: 3900ms — secondary pulse
+    const b1 = beatScale(ms, 3400, 200);
+    const b2 = beatScale(ms, 3900, 200);
+    scale = Math.max(b1, b2);
+    // Wordmark: name fades 3100→3600, sub fades 3300→3800
+    wmName = clamp(remap(ms, 3100, 3500));
+    wmSub  = clamp(remap(ms, 3350, 3850));
+  }
+
+  return { st, scale, wmName, wmSub, logoOpacity };
+}
+
+function getOutroState(ms) {
+  // 0        — black → s4 (emerge)
+  // 0–300    — emerge: s0play → s4 (quick fade in)
+  // 300–1800 — hold s4 with wordmark visible, then wm fades out 800→1500
+  // beat at 400ms
+  // 1800–2400—s4 → s3
+  // 2400–2700—hold s3
+  // 2700–3300—s3 → s2
+  // 3300–3600—hold s2
+  // 3600–4200—s2 → s1
+  // 4200–4600—s1 fade out → s0 (dissolve to black)
+
+  let st, scale = 1, wmName = 0, wmSub = 0, logoOpacity = 1;
+
+  if (ms < 300) {
+    const s0play = JSON.parse(JSON.stringify(KF.s0));
+    st = iKF(s0play, KF.s4, remap(ms, 0, 300), easeOutQuint, easeOutQuint);
+    wmName = 0; wmSub = 0;
+  } else if (ms < 1800) {
+    st = JSON.parse(JSON.stringify(KF.s4));
+    // beat at 400ms
+    scale = beatScale(ms, 400, 200);
+    // wordmark: in at 0→300 (already done), hold, out 900→1500
+    wmName = clamp(1 - remap(ms, 900, 1400));
+    wmSub  = clamp(1 - remap(ms, 700, 1200));
+    // initial fade in wordmark
+    const inName = clamp(remap(ms, 300, 650));
+    const inSub  = clamp(remap(ms, 450, 800));
+    if (ms < 900) { wmName = inName; wmSub = inSub; }
+    else { wmName = clamp(1 - remap(ms, 900, 1400)); wmSub = clamp(1 - remap(ms, 700, 1200)); }
+  } else if (ms < 2400) {
+    st = iKF(KF.s4, KF.s3, remap(ms, 1800, 2400), easeInOutQuint, easeInOutQuint);
+  } else if (ms < 2700) {
+    st = KF.s3;
+  } else if (ms < 3300) {
+    st = iKF(KF.s3, KF.s2, remap(ms, 2700, 3300), easeInOutQuint, easeInOutQuint);
+  } else if (ms < 3600) {
+    st = KF.s2;
+  } else if (ms < 4200) {
+    st = iKF(KF.s2, KF.s1, remap(ms, 3600, 4200), easeInOutQuint, easeInOutQuint);
+  } else {
+    // dissolve to nothing
+    const t = remap(ms, 4200, 4600);
+    const fade = 1 - easeInQuint(t);
+    st = JSON.parse(JSON.stringify(KF.s1));
+    st.p1.a *= fade;
+    st.p2.a *= fade;
+    st.star.a *= fade;
+  }
+
+  // Explicit full-logo fade out at tail.
+  logoOpacity = 1 - clamp(remap(ms, 4000, OUTRO_DUR));
+  return { st, scale, wmName, wmSub, logoOpacity };
+}
+
+// ── Render ───────────────────────────────────────────────────────────
+let mode = 'intro'; // 'intro' | 'outro'
+let t0 = null;
+let raf = null;
+
+function drawAtTime(ms, ts = performance.now()) {
+  const dur = mode === 'intro' ? INTRO_DUR : OUTRO_DUR;
+  const tMs = Math.min(Math.max(ms, 0), dur);
+
+  const { st, scale, wmName, wmSub, logoOpacity } =
+    mode === 'intro' ? getIntroState(tMs) : getOutroState(tMs);
+
+  // Wordmark
+  setWordmark(wmName * logoOpacity, wmSub * logoOpacity);
+
+  // Update label
+  document.getElementById('scene-label').textContent =
+    `${mode}  ·  ${(tMs/1000).toFixed(1)}s`;
+
+  // Gentle idle bob (disabled during pulse so beat is crisp)
+  const bobX = 1.6 * Math.sin(ts * 0.00175);
+  const bobY = 1.4 * Math.cos(ts * 0.00155);
+
+  // Draw
+  cx.clearRect(0, 0, W, H);
+
+  // Full logo group opacity for clean intro/outro fades.
+  cx.save();
+  cx.globalAlpha = logoOpacity;
+
+  // Apply scale for beat pulse (scale from center)
+  if (scale !== 1) {
+    cx.save();
+    cx.translate(MX, MY);
+    cx.scale(scale, scale);
+    cx.translate(-MX, -MY);
+  }
+
+  drawPill(st.p2.x, st.p2.y, st.p2.w, st.p2.h, st.p2.rx, st.p2.a, true);
+  drawPill(st.p1.x, st.p1.y, st.p1.w, st.p1.h, st.p1.rx, st.p1.a, false);
+  drawAIStar(MX + bobX, MY + bobY, st.star.sz, st.star.a);
+  drawPlay(MX, MY, st.play.sz, st.play.a);
+
+  if (scale !== 1) cx.restore();
+  cx.restore();
+}
+
+function frame(ts) {
+  if (!t0) t0 = ts;
+  const dur = mode === 'intro' ? INTRO_DUR : OUTRO_DUR;
+  const ms  = Math.min(ts - t0, dur);
+
+  drawAtTime(ms, ts);
+
+  if (ms < dur) {
+    raf = requestAnimationFrame(frame);
+  } else {
+    // Snap to final state cleanly
+    if (mode === 'outro') {
+      cx.clearRect(0, 0, W, H); // pure black at end
+      setWordmark(0, 0);
+    }
+    document.getElementById('scene-label').textContent = `${mode}  ·  done`;
+  }
+}
+
+function play(m) {
+  if (raf) cancelAnimationFrame(raf);
+  t0 = null;
+  mode = m;
+  setWordmark(0, 0);
+  cx.clearRect(0, 0, W, H);
+  document.getElementById('btn-intro').classList.toggle('active', m === 'intro');
+  document.getElementById('btn-outro').classList.toggle('active', m === 'outro');
+  raf = requestAnimationFrame(frame);
+}
+
+window.SudarIntroOutro = {
+  play,
+  setMode(nextMode) {
+    const m = nextMode === 'outro' ? 'outro' : 'intro';
+    mode = m;
+    t0 = null;
+    if (raf) cancelAnimationFrame(raf);
+    setWordmark(0, 0);
+    drawAtTime(0);
+  },
+  setTime(seconds) {
+    const dur = mode === 'intro' ? INTRO_DUR : OUTRO_DUR;
+    const ms = Math.min(Math.max((seconds || 0) * 1000, 0), dur);
+    drawAtTime(ms);
+  },
+  durationSeconds(nextMode) {
+    const m = nextMode === 'outro' ? 'outro' : mode;
+    return (m === 'outro' ? OUTRO_DUR : INTRO_DUR) / 1000;
+  }
+};
+
+// Autoplay initial mode on load (query-selectable).
+play(initialMode);
+</script>
+</body>
+</html>

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import re
 from typing import Any, List, Optional
 
 from together import Together
@@ -69,6 +70,8 @@ def _compact_slide_text(slide: SlideContent) -> SlideContent:
         "contrast": 4,
         "stat_focus": 3,
         "standard": 4,
+        "intro": 0,
+        "outro": 0,
     }
     max_bullets = bullet_limits.get(slide.layout_kind, 4)
     bw = _env_int("SUDARVID_BULLET_MAX_WORDS", 18)
@@ -103,6 +106,81 @@ def _compact_slide_text(slide: SlideContent) -> SlideContent:
         max_chars=_env_int("SUDARVID_STAT_CAPTION_MAX_CHARS", 72),
     )
     slide.bullets = compact_bullets
+    return slide
+
+
+_STOPWORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "to",
+        "of",
+        "in",
+        "on",
+        "for",
+        "with",
+        "as",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "by",
+        "from",
+        "that",
+        "this",
+        "it",
+        "we",
+        "you",
+        "your",
+        "our",
+    }
+)
+
+
+def _keywords(text: str) -> set[str]:
+    toks = re.findall(r"[A-Za-z0-9']+", text or "")
+    out = set()
+    for t in toks:
+        tl = t.lower()
+        if len(tl) >= 4 and tl not in _STOPWORDS:
+            out.add(tl)
+    return out
+
+
+def _apply_basic_guardrails(slide: SlideContent) -> SlideContent:
+    """
+    Guardrails to reduce "content mismatch":
+    if narration looks unrelated to the slide's visible copy, rewrite narration
+    from title + bullets (keeps TTS, captions, and on-screen content coherent).
+    """
+    visible = " ".join([slide.title or ""] + (slide.bullets or [])).strip()
+    narration = (slide.narration or "").strip()
+    if not narration:
+        slide.narration = (visible or slide.title or " ").strip()
+        return slide
+
+    k_vis = _keywords(visible)
+    k_nar = _keywords(narration)
+    # If slide has no meaningful keywords, don't penalize.
+    if not k_vis or not k_nar:
+        return slide
+
+    overlap = len(k_vis & k_nar)
+    # Heuristic: if almost no overlap, narration likely drifted.
+    if overlap < max(1, min(2, int(len(k_vis) * 0.12))):
+        parts: List[str] = []
+        if slide.title:
+            parts.append(slide.title.rstrip(".") + ".")
+        for b in (slide.bullets or [])[:3]:
+            if b:
+                parts.append(b.rstrip(".") + ".")
+        repaired = " ".join(parts).strip()
+        if repaired:
+            slide.narration = repaired
     return slide
 
 
@@ -613,5 +691,6 @@ summary, or next subtopic). Return JSON with a "slides" array.
         for i, s in enumerate(slides):
             s.index = i
             _compact_slide_text(s)
+            _apply_basic_guardrails(s)
         return slides
 

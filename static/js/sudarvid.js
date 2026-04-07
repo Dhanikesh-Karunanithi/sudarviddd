@@ -1,6 +1,213 @@
 (function () {
   const slides = Array.from(document.querySelectorAll(".slide"));
 
+  const animLevel =
+    (typeof window !== "undefined" && window.SUDARVID_ANIMATION_LEVEL) ||
+    (document.body && document.body.dataset && document.body.dataset.animationLevel) ||
+    "medium";
+
+  const progressBar = document.getElementById("slide-progress-bar");
+
+  function setDeckProgress(seconds, totalSeconds) {
+    if (!progressBar || totalSeconds <= 0) return;
+    const pct = Math.min(100, Math.max(0, (seconds / totalSeconds) * 100));
+    progressBar.style.width = pct + "%";
+  }
+
+  let lastShownIndex = -1;
+  let transitionLock = false;
+
+  function triggerCaptureSweep(newIndex) {
+    if (!window.IS_CAPTURE) return;
+    if (lastShownIndex < 0 || newIndex === lastShownIndex) return;
+    const sweep = document.getElementById("sudarvid-capture-sweep");
+    if (!sweep) return;
+    sweep.classList.remove("sweep-active");
+    void sweep.offsetWidth;
+    sweep.classList.add("sweep-active");
+    window.setTimeout(function () {
+      sweep.classList.remove("sweep-active");
+    }, 450);
+  }
+
+  function animateStatNumber(el) {
+    const raw = (el.textContent || "").trim();
+    const match = raw.match(/^([\d,.]+)(.*)$/);
+    if (!match) return;
+    const target = parseFloat(match[1].replace(/,/g, ""));
+    if (Number.isNaN(target)) return;
+    const suffix = match[2] || "";
+    const start = performance.now();
+    const dur = 900;
+    function frame(t) {
+      const p = Math.min(1, (t - start) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      const v = Math.round(target * eased);
+      el.textContent = v + suffix;
+      if (p < 1) {
+        window.requestAnimationFrame(frame);
+      }
+    }
+    window.requestAnimationFrame(frame);
+  }
+
+  var captionEl = null;
+  var captionWordEls = [];
+  var captionTokenCount = 0;
+  var activeCaptionIdx = -1;
+  var activeCaptionProgress = -1;
+  var activeCaptionTimesMs = null;
+
+  function tokenizeCaption(text) {
+    return String(text || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+  }
+
+  function renderCaptionForSlide(idx) {
+    if (!captionEl) {
+      captionEl = document.getElementById("sudarvid-caption");
+    }
+    if (!captionEl) return;
+    var meta = (window.SUDARVID_SLIDES || [])[idx];
+    activeCaptionTimesMs = meta && Array.isArray(meta.caption_times_ms) ? meta.caption_times_ms : null;
+    var tokens =
+      meta && Array.isArray(meta.caption_words) && meta.caption_words.length
+        ? meta.caption_words
+        : tokenizeCaption(meta && meta.narration ? meta.narration : "");
+    captionEl.innerHTML = "";
+    captionWordEls = [];
+    captionTokenCount = tokens.length;
+    if (!tokens.length) {
+      return;
+    }
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < tokens.length; i++) {
+      var span = document.createElement("span");
+      span.className = "sv-word";
+      span.textContent = tokens[i];
+      frag.appendChild(span);
+      captionWordEls.push(span);
+      if (i < tokens.length - 1) {
+        frag.appendChild(document.createTextNode(" "));
+      }
+    }
+    captionEl.appendChild(frag);
+  }
+
+  function updateCaptionProgress(slideIdx, slideProgress, secondsIntoSlide) {
+    if (slideIdx !== activeCaptionIdx) {
+      activeCaptionIdx = slideIdx;
+      activeCaptionProgress = -1;
+      renderCaptionForSlide(slideIdx);
+    }
+    if (!captionWordEls.length) return;
+    var p = Math.max(0, Math.min(0.999, slideProgress || 0));
+    // If we have word-level timestamps, drive highlighting from the audio clock
+    // instead of evenly pacing tokens across the slide duration.
+    var upto = -1;
+    if (activeCaptionTimesMs && activeCaptionTimesMs.length) {
+      var tMs = Math.max(0, (secondsIntoSlide || 0) * 1000);
+      // Avoid frequent DOM churn: only update if we've progressed at least one word boundary.
+      // We still keep activeCaptionProgress updated for the fallback gate.
+      upto = 0;
+      for (var k = 0; k < activeCaptionTimesMs.length; k++) {
+        if (tMs >= activeCaptionTimesMs[k]) {
+          upto = k;
+        } else {
+          break;
+        }
+      }
+    } else {
+      if (Math.abs(p - activeCaptionProgress) < 0.01) return;
+      upto = Math.floor(p * captionTokenCount);
+    }
+    activeCaptionProgress = p;
+    upto = Math.max(0, Math.min(captionTokenCount - 1, upto));
+    for (var i = 0; i < captionWordEls.length; i++) {
+      var el = captionWordEls[i];
+      el.classList.toggle("is-spoken", i < upto);
+      el.classList.toggle("is-current", i === upto);
+    }
+  }
+
+  function runSlideActivated(index) {
+    const slide = slides[index];
+    if (!slide) return;
+    triggerCaptureSweep(index);
+    const statEl = slide.querySelector(".slide-big-stat");
+    if (statEl) {
+      animateStatNumber(statEl);
+    }
+    const titleEl = slide.querySelector(".slide-title");
+    if (titleEl && animLevel === "dynamic") {
+      try {
+        titleEl.animate(
+          [{ clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)" }],
+          { duration: 300, easing: "ease-out", fill: "both" }
+        );
+      } catch (e) {}
+    }
+  }
+
+  function showSlide(index) {
+    const i = Math.max(0, Math.min(slides.length - 1, index));
+    updateCaptionProgress(i, 0);
+
+    if (animLevel !== "dynamic" || transitionLock) {
+      const prev = slides.findIndex(function (s) {
+        return s.classList.contains("active");
+      });
+      slides.forEach(function (s, j) {
+        s.classList.toggle("active", j === i);
+      });
+      if (prev !== i) {
+        runSlideActivated(i);
+      }
+      lastShownIndex = i;
+      return i;
+    }
+
+    const prevIdx = slides.findIndex(function (s) {
+      return s.classList.contains("active");
+    });
+    if (prevIdx === i) {
+      return i;
+    }
+
+    transitionLock = true;
+    const outgoing = slides[prevIdx];
+    const incoming = slides[i];
+
+    const a1 = outgoing.animate(
+      [
+        { transform: "scale(1)", opacity: 1 },
+        { transform: "scale(0.97) translateY(-8px)", opacity: 0 }
+      ],
+      { duration: 380, easing: "ease-in", fill: "both" }
+    );
+
+    a1.finished.then(function () {
+      outgoing.classList.remove("active");
+      incoming.classList.add("active");
+      const a2 = incoming.animate(
+        [
+          { transform: "scale(1.04) translateY(12px)", opacity: 0 },
+          { transform: "scale(1)", opacity: 1 }
+        ],
+        { duration: 600, easing: "cubic-bezier(0.22,0.68,0,1.2)", fill: "both" }
+      );
+      a2.finished.then(function () {
+        transitionLock = false;
+        runSlideActivated(i);
+        lastShownIndex = i;
+      });
+    });
+
+    return i;
+  }
+
   if (slides.length === 0) {
     const deck = document.getElementById("deck");
     if (deck) {
@@ -25,17 +232,13 @@
     return;
   }
 
-  function showSlide(index) {
-    const i = Math.max(0, Math.min(slides.length - 1, index));
-    slides.forEach((s, j) => s.classList.toggle("active", j === i));
-    return i;
-  }
-
   function buildTimings() {
-    const slideDurations = slides.map((s) => parseFloat(s.dataset.duration || "5"));
+    const slideDurations = slides.map(function (s) {
+      return parseFloat(s.dataset.duration || "5");
+    });
     const slideStartTimes = [];
     let t = 0;
-    slideDurations.forEach((d) => {
+    slideDurations.forEach(function (d) {
       slideStartTimes.push(t);
       t += d;
     });
@@ -57,13 +260,13 @@
         audio.currentTime = 0;
         const playPromise = audio.play();
         if (playPromise && typeof playPromise.then === "function") {
-          playPromise.catch(() => {});
+          playPromise.catch(function () {});
         }
       } catch (e) {}
 
       audio.addEventListener(
         "playing",
-        () => {
+        function () {
           audioClockEnabled = true;
         },
         { once: true }
@@ -79,6 +282,7 @@
 
     function update() {
       const now = clockSeconds();
+      setDeckProgress(now, totalDurationSeconds);
 
       let idx = slides.length - 1;
       for (let i = slideStartTimes.length - 1; i >= 0; i--) {
@@ -92,6 +296,9 @@
         currentIndex = idx;
         showSlide(idx);
       }
+      const start = slideStartTimes[idx] || 0;
+      const dur = Math.max(0.001, (slideStartTimes[idx + 1] || totalDurationSeconds) - start);
+      updateCaptionProgress(idx, (now - start) / dur, now - start);
 
       if (now < totalDurationSeconds) {
         window.requestAnimationFrame(update);
@@ -99,6 +306,7 @@
     }
 
     showSlide(0);
+    runSlideActivated(0);
     window.requestAnimationFrame(update);
   }
 
@@ -132,12 +340,12 @@
       audio.preload = "auto";
       audio.muted = false;
       audio.volume = 1;
-      audio.addEventListener("error", () => {
+      audio.addEventListener("error", function () {
         if (hint) {
           hint.textContent = "Audio failed to load. Check that audio/voiceover.mp3 is reachable.";
         }
       });
-      audio.addEventListener("playing", () => {
+      audio.addEventListener("playing", function () {
         audioBlocked = false;
         if (hint) {
           hint.textContent = "Space: play/pause · ← →: slides · Home/End: start/end";
@@ -186,7 +394,12 @@
     function tick() {
       rafId = null;
       const now = getNowSeconds();
-      showSlide(computeSlideIndex(now));
+      setDeckProgress(now, totalDurationSeconds);
+      const idx = computeSlideIndex(now);
+      showSlide(idx);
+      const start = slideStartTimes[idx] || 0;
+      const dur = Math.max(0.001, (slideStartTimes[idx + 1] || totalDurationSeconds) - start);
+      updateCaptionProgress(idx, (now - start) / dur, now - start);
 
       if (!scrubbing) {
         setScrubVisual(now);
@@ -238,7 +451,7 @@
       } catch (e) {}
       const p = audio.play();
       if (p && typeof p.then === "function") {
-        p.catch(() => {
+        p.catch(function () {
           useAudioClock = false;
           audioBlocked = true;
           paused = true;
@@ -251,7 +464,7 @@
             "position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;cursor:pointer";
           overlay.innerHTML =
             '<div style="background:#fff;padding:2rem 3rem;border-radius:12px;font-size:1.4rem;font-weight:bold;box-shadow:0 8px 32px rgba(0,0,0,0.25);">▶ Click anywhere to play with audio</div>';
-          overlay.addEventListener("click", () => {
+          overlay.addEventListener("click", function () {
             overlay.remove();
             play();
           });
@@ -266,7 +479,7 @@
       useAudioClock = false;
 
       if (audio) {
-        const onPlaying = () => {
+        const onPlaying = function () {
           useAudioClock = true;
         };
         audio.addEventListener("playing", onPlaying, { once: true });
@@ -348,21 +561,27 @@
       }
     }
 
-    btnPrev.addEventListener("click", () => goPrev());
-    btnNext.addEventListener("click", () => goNext());
-    btnPlay.addEventListener("click", () => togglePlayPause());
+    btnPrev.addEventListener("click", function () {
+      goPrev();
+    });
+    btnNext.addEventListener("click", function () {
+      goNext();
+    });
+    btnPlay.addEventListener("click", function () {
+      togglePlayPause();
+    });
 
-    scrub.addEventListener("pointerdown", () => {
+    scrub.addEventListener("pointerdown", function () {
       scrubbing = true;
     });
-    scrub.addEventListener("pointerup", () => {
+    scrub.addEventListener("pointerup", function () {
       scrubbing = false;
       playStartPerf = performance.now();
       if (!paused) {
         scheduleTick();
       }
     });
-    scrub.addEventListener("input", () => {
+    scrub.addEventListener("input", function () {
       const sec = (parseFloat(scrub.value) / 1000) * totalDurationSeconds;
       timeAtPause = sec;
       if (audio) {
@@ -375,7 +594,7 @@
         formatTime(sec) + " / " + formatTime(totalDurationSeconds);
     });
 
-    document.addEventListener("keydown", (e) => {
+    document.addEventListener("keydown", function (e) {
       if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) {
         return;
       }
@@ -399,24 +618,28 @@
 
     window.SudarVid = {
       showSlide,
-      play: () => play(),
-      pause: () => pause(),
+      play: function () {
+        play();
+      },
+      pause: function () {
+        pause();
+      },
       seekTo,
       goPrev,
-      goNext,
+      goNext
     };
 
     setScrubVisual(0);
     showSlide(0);
+    runSlideActivated(0);
     syncPlayButton();
 
-    // Match previous behavior: try to start automatically
     paused = false;
     timeAtPause = 0;
     playStartPerf = performance.now();
     useAudioClock = false;
     if (audio) {
-      const onPlaying = () => {
+      const onPlaying = function () {
         useAudioClock = true;
       };
       audio.addEventListener("playing", onPlaying, { once: true });
@@ -429,9 +652,9 @@
   }
 
   if (window.IS_CAPTURE) {
-    const ui = document.getElementById("sudarvid-player-ui");
-    if (ui) {
-      ui.remove();
+    const chrome = document.getElementById("sudarvid-chrome");
+    if (chrome) {
+      chrome.remove();
     }
     startCapturePlayback();
   } else {

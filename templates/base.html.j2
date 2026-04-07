@@ -9,26 +9,168 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="{{ theme.google_fonts_url }}" rel="stylesheet">
   {% endif %}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="static/css/design-tokens.css" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    :root {
+      --sv-font-heading: {{ theme.font_heading | safe }};
+      --sv-font-body: {{ theme.font_body | safe }};
+    }
+
     body {
-      background: #1a1a1a;
+      background: var(--apple-bg);
+      background-image:
+        radial-gradient(ellipse 120% 80% at 50% -20%, rgba(255, 255, 255, 0.07), transparent 52%),
+        radial-gradient(ellipse 80% 60% at 100% 100%, rgba(255, 255, 255, 0.04), transparent 48%);
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      min-height: 100vh;
+      margin: 0;
+      font-family: var(--sv-font-body), var(--apple-font);
+      padding-bottom: 0;
+      box-sizing: border-box;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+      font-feature-settings: "kern" 1, "liga" 1;
+    }
+
+    #sudarvid-deck-stage {
+      flex: 1;
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
-      font-family: {{ theme.font_body | safe }};
-      padding-bottom: 58px;
+      min-height: 0;
+      width: 100%;
+      padding: 8px;
       box-sizing: border-box;
     }
 
+    #deck-viewport {
+      overflow: hidden;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    #deck-scale-inner {
+      transform-origin: top left;
+      will-change: transform;
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+
     #deck {
+      container-type: inline-size;
+      container-name: sudarvid-deck;
       position: relative;
       width: {{ width }}px;
       height: {{ height }}px;
       overflow: hidden;
       background: {{ theme.bg_color }};
+    }
+
+    #slide-progress-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 3px;
+      width: 0%;
+      z-index: 100;
+      background: linear-gradient(90deg, #ffffff, rgba(255, 255, 255, 0.5));
+      transition: width 0.4s ease;
+      pointer-events: none;
+    }
+
+    #sudarvid-capture-sweep {
+      position: absolute;
+      inset: 0;
+      z-index: 99;
+      pointer-events: none;
+      opacity: 0;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.14) 45%,
+        transparent 90%
+      );
+      background-size: 200% 100%;
+    }
+    #sudarvid-capture-sweep.sweep-active {
+      animation: sudarvidSweep 0.4s ease-out forwards;
+    }
+    @keyframes sudarvidSweep {
+      0% { opacity: 0; background-position: 100% 0; }
+      35% { opacity: 1; }
+      100% { opacity: 0; background-position: -100% 0; }
+    }
+
+    .slide-ambient {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .slide-ambient .ambient-svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .layout-intro .slide-ambient,
+    .layout-outro .slide-ambient {
+      display: none;
+    }
+
+    body[data-animation-level="dynamic"] .slide {
+      transition: opacity 0.42s ease;
+    }
+
+    {% if animation_level != 'dynamic' %}
+    .slide.active.visual-full_bleed_bg .slide-image-wrap .slide-image,
+    .slide.active:not(.visual-split_right):not(.visual-split_left):not(.visual-top_band):not(.visual-inset_card) .slide-image-wrap .slide-image {
+      animation: kenBurns 12s ease-in-out both;
+      transform-origin: center center;
+    }
+    @keyframes kenBurns {
+      0%   { transform: scale(1.08) translate(0px, 0px); }
+      50%  { transform: scale(1.14) translate(-18px, -10px); }
+      100% { transform: scale(1.10) translate(8px, 6px); }
+    }
+    {% endif %}
+
+    .layout-intro .slide-content--intro,
+    .layout-outro .slide-content--outro {
+      max-width: 92%;
+      text-align: center;
+      justify-content: center;
+      align-items: center;
+      margin: 0 auto;
+    }
+    .layout-intro {
+      background: #000000 !important;
+      color: #f5f5f7 !important;
+    }
+    .slide-title--intro {
+      font-size: clamp(32px, 11cqw, 72px);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    .layout-outro {
+      background: #000000 !important;
+      color: #f5f5f7 !important;
+    }
+    .outro-wordmark {
+      font-family: var(--apple-font);
+      font-size: clamp(36px, 6vw, 96px);
+      font-weight: 600;
+      letter-spacing: -0.04em;
+      opacity: 0.95;
     }
 
     .slide {
@@ -47,6 +189,9 @@
       background: {{ theme.bg_color }};
       color: {{ theme.text_color }};
       overflow: hidden;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+      font-feature-settings: "kern" 1, "liga" 1;
     }
 
     .slide.active {
@@ -64,17 +209,18 @@
       width: 100%;
       height: 100%;
       object-fit: cover;
-      opacity: 0.34;
+      opacity: 0.58;
     }
     .slide-image-overlay {
       position: absolute;
       inset: 0;
       background:
         linear-gradient(
-          98deg,
-          color-mix(in srgb, {{ theme.bg_color }} 30%, transparent) 8%,
-          transparent 52%,
-          color-mix(in srgb, {{ theme.bg_color }} 38%, transparent) 100%
+          96deg,
+          color-mix(in srgb, {{ theme.bg_color }} 14%, transparent) 4%,
+          color-mix(in srgb, {{ theme.bg_color }} 4%, transparent) 36%,
+          color-mix(in srgb, {{ theme.bg_color }} 6%, transparent) 62%,
+          color-mix(in srgb, {{ theme.bg_color }} 20%, transparent) 100%
         );
       z-index: 1;
     }
@@ -83,6 +229,9 @@
       position: relative;
       z-index: 2;
       max-width: 72%;
+    }
+    .slide.visual-full_bleed_bg .slide-content {
+      max-width: min(72%, 48cqw);
     }
 
     /* —— Layout variants (learning / editorial decks) —— */
@@ -93,7 +242,7 @@
       letter-spacing: -0.02em;
     }
     .slide-subtitle {
-      font-family: {{ theme.font_body | safe }};
+      font-family: var(--sv-font-body), var(--apple-font);
       font-size: clamp(16px, 2vw, 26px);
       line-height: 1.45;
       opacity: 0.88;
@@ -101,7 +250,7 @@
       max-width: 36em;
     }
     .slide-learn-card {
-      font-family: {{ theme.font_body | safe }};
+      font-family: var(--sv-font-body), var(--apple-font);
       font-size: clamp(15px, 1.55vw, 20px);
       line-height: 1.55;
       padding: 20px 22px;
@@ -127,7 +276,7 @@
     .layout-split_learn .slide-head { grid-column: 1 / -1; }
     .slide-bullet-cards { display: flex; flex-direction: column; gap: 12px; }
     .slide-bullet-card {
-      font-family: {{ theme.font_body | safe }};
+      font-family: var(--sv-font-body), var(--apple-font);
       font-size: clamp(14px, 1.45vw, 19px);
       line-height: 1.5;
       padding: 14px 16px;
@@ -145,7 +294,7 @@
       margin-bottom: 12px;
       border-radius: 12px;
       background: color-mix(in srgb, {{ theme.text_color }} 8%, transparent);
-      font-family: {{ theme.font_body | safe }};
+      font-family: var(--sv-font-body), var(--apple-font);
       font-size: clamp(14px, 1.5vw, 20px);
       line-height: 1.5;
     }
@@ -155,7 +304,7 @@
       left: 14px;
       top: 50%;
       transform: translateY(-50%);
-      font-family: {{ theme.font_heading | safe }};
+      font-family: var(--sv-font-heading), var(--apple-font);
       font-weight: 800;
       font-size: 20px;
       color: {{ theme.accent_color }};
@@ -174,12 +323,12 @@
       border-top: 3px solid {{ theme.accent_color }};
     }
     .slide-contrast-col h3 {
-      font-family: {{ theme.font_heading | safe }};
+      font-family: var(--sv-font-heading), var(--apple-font);
       font-size: clamp(18px, 2vw, 26px);
       margin-bottom: 10px;
     }
     .slide-contrast-col p {
-      font-family: {{ theme.font_body | safe }};
+      font-family: var(--sv-font-body), var(--apple-font);
       font-size: clamp(14px, 1.45vw, 19px);
       line-height: 1.55;
       opacity: 0.92;
@@ -193,7 +342,7 @@
       margin: 12px 0 22px;
     }
     .slide-big-stat {
-      font-family: {{ theme.font_heading | safe }};
+      font-family: var(--sv-font-heading), var(--apple-font);
       font-weight: 800;
       font-size: clamp(56px, 9vw, 120px);
       line-height: 1;
@@ -201,7 +350,7 @@
       color: {{ theme.accent_color }};
     }
     .slide-stat-caption {
-      font-family: {{ theme.font_body | safe }};
+      font-family: var(--sv-font-body), var(--apple-font);
       font-size: clamp(15px, 1.6vw, 22px);
       max-width: 14em;
       line-height: 1.4;
@@ -213,16 +362,23 @@
       text-transform: uppercase;
       color: {{ theme.accent_color }};
       margin-bottom: 20px;
-      font-family: {{ theme.font_body | safe }};
+      font-family: var(--sv-font-body), var(--apple-font);
     }
 
     .slide-title {
-      font-family: {{ theme.font_heading | safe }};
+      font-family: var(--sv-font-heading), var(--apple-font);
       color: {{ theme.text_color }};
       margin-bottom: 28px;
       line-height: 1.08;
-      font-size: clamp(36px, 5.5vw, 84px);
+      font-size: clamp(28px, 9cqw, 84px);
       font-weight: 800;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      hyphens: auto;
+    }
+
+    .slide-text-col .slide-title {
+      font-size: clamp(22px, 7cqw, 64px);
     }
 
     .slide-bullets {
@@ -230,7 +386,7 @@
       padding-left: 1.4em;
     }
     .slide-bullets li {
-      font-family: {{ theme.font_body | safe }};
+      font-family: var(--sv-font-body), var(--apple-font);
       color: {{ theme.text_color }};
       margin-bottom: 10px;
       line-height: 1.65;
@@ -253,7 +409,7 @@
       letter-spacing: 0.15em;
       color: {{ theme.accent_color }};
       opacity: 0.7;
-      font-family: {{ theme.font_body | safe }};
+      font-family: var(--sv-font-body), var(--apple-font);
       z-index: 10;
     }
 
@@ -307,16 +463,30 @@
 
     .slide-media-col {
       display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 44px 56px 44px 36px;
+      align-items: stretch;
+      justify-content: stretch;
+      padding: 28px 40px 28px 28px;
       box-sizing: border-box;
+      min-height: 0;
       background: color-mix(in srgb, {{ theme.text_color }} 5%, transparent);
     }
     .slide-split-left .slide-media-col {
-      padding: 44px 36px 44px 56px;
+      padding: 28px 28px 28px 40px;
     }
 
+    .slide.visual-split_right .slide-media-frame,
+    .slide.visual-split_left .slide-media-frame {
+      width: 100%;
+      height: 100%;
+      max-width: none;
+      min-height: 0;
+      flex: 1;
+      aspect-ratio: auto;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 44px color-mix(in srgb, #000 26%, transparent);
+      border: 1px solid color-mix(in srgb, {{ theme.text_color }} 14%, transparent);
+    }
     .slide-media-frame {
       width: 100%;
       max-width: 520px;
@@ -325,6 +495,12 @@
       overflow: hidden;
       box-shadow: 0 20px 44px color-mix(in srgb, #000 26%, transparent);
       border: 1px solid color-mix(in srgb, {{ theme.text_color }} 14%, transparent);
+    }
+    .slide-media-col .slide-media-frame .slide-image {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 1;
     }
     .slide-media-frame .slide-image {
       width: 100%;
@@ -402,50 +578,132 @@
       box-sizing: border-box;
     }
 
+    #sudarvid-chrome {
+      position: sticky;
+      bottom: 0;
+      z-index: 1000;
+      flex-shrink: 0;
+    }
+
+    #sudarvid-caption-wrap {
+      background: color-mix(in srgb, var(--apple-surface, #1c1c1e) 92%, transparent);
+      backdrop-filter: var(--apple-blur, blur(20px));
+      -webkit-backdrop-filter: var(--apple-blur, blur(20px));
+      border-top: 1px solid var(--apple-border, rgba(255, 255, 255, 0.12));
+      padding: 10px 16px 8px;
+      max-height: 22vh;
+      overflow-y: auto;
+    }
+
+    #sudarvid-caption {
+      margin: 0;
+      font-size: clamp(13px, 2.5vw, 17px);
+      line-height: 1.45;
+      color: var(--apple-text-primary, rgba(255, 255, 255, 0.95));
+      font-family: var(--sv-font-body), var(--apple-font);
+      text-align: center;
+      letter-spacing: 0.01em;
+    }
+    #sudarvid-caption .sv-word {
+      opacity: 0.34;
+      transition: opacity 0.14s ease;
+    }
+    #sudarvid-caption .sv-word.is-spoken {
+      opacity: 0.78;
+    }
+    #sudarvid-caption .sv-word.is-current {
+      opacity: 1;
+      font-weight: 700;
+    }
+
     /* Bottom playback controls (hidden during headless capture — see sudarvid.js) */
     #sudarvid-player-ui {
-      position: fixed;
+      position: relative;
       left: 0;
       right: 0;
       bottom: 0;
-      z-index: 1000;
+      z-index: 1001;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 10px 14px;
       padding: 12px 16px;
-      background: rgba(15, 17, 21, 0.94);
-      border-top: 1px solid color-mix(in srgb, {{ theme.accent_color }} 45%, transparent);
-      font-family: {{ theme.font_body | safe }}, system-ui, sans-serif;
+      background: var(--apple-surface);
+      backdrop-filter: var(--apple-blur);
+      -webkit-backdrop-filter: var(--apple-blur);
+      border-top: 1px solid var(--apple-border);
+      font-family: var(--apple-font);
       box-sizing: border-box;
+      box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.35);
     }
     #sudarvid-player-ui button {
-      background: color-mix(in srgb, {{ theme.accent_color }} 80%, #444);
-      color: #0a0a0a;
-      border: none;
-      border-radius: 8px;
-      padding: 8px 14px;
-      font-weight: 700;
+      background: var(--apple-glass);
+      color: var(--apple-text-primary);
+      border: 1px solid var(--apple-border);
+      border-radius: 980px;
+      padding: 8px 18px;
+      font-weight: 600;
       cursor: pointer;
       font-size: 13px;
+      letter-spacing: -0.01em;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
     }
-    #sudarvid-player-ui button:hover { filter: brightness(1.1); }
+    #sudarvid-player-ui button:hover {
+      transform: scale(1.03);
+      box-shadow: 0 0 24px rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.1);
+    }
     #sudarvid-player-ui button:focus-visible {
-      outline: 2px solid {{ theme.accent_color }};
+      outline: 2px solid var(--apple-accent);
       outline-offset: 2px;
     }
     #sudarvid-scrub {
       flex: 1 1 180px;
       min-width: 100px;
-      height: 6px;
-      accent-color: {{ theme.accent_color }};
+      height: 20px;
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+      accent-color: var(--apple-accent);
+    }
+    #sudarvid-scrub::-webkit-slider-runnable-track {
+      height: 3px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.15);
+    }
+    #sudarvid-scrub::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      margin-top: -5px;
+      border-radius: 50%;
+      background: var(--apple-accent);
+      box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+      cursor: pointer;
+    }
+    #sudarvid-scrub::-moz-range-track {
+      height: 3px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.15);
+    }
+    #sudarvid-scrub::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border: none;
+      border-radius: 50%;
+      background: var(--apple-accent);
+      box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
       cursor: pointer;
     }
     #sudarvid-time {
       font-size: 12px;
       letter-spacing: 0.03em;
-      color: #e2e8f0;
-      opacity: 0.9;
+      color: var(--apple-text-secondary);
+      opacity: 1;
       min-width: 8.5em;
       font-variant-numeric: tabular-nums;
     }
@@ -454,7 +712,7 @@
       flex-basis: 100%;
       font-size: 10px;
       opacity: 0.55;
-      color: #94a3b8;
+      color: rgba(250, 250, 250, 0.45);
       margin: 0;
     }
 
@@ -463,7 +721,6 @@
     {% if animation_level == 'subtle' %}
     .slide.active .slide-content  { animation: fadeInUp 0.85s cubic-bezier(.22,.68,0,1.2) both; }
     .slide.active .slide-nav-label{ animation: fadeIn 0.6s ease both; }
-    .slide.active.visual-full_bleed_bg .slide-image-wrap .slide-image { animation: subtleZoom 8s ease-out both; }
     .slide.active .slide-media-frame .slide-image { animation: frameDrift 12s ease-in-out both; }
     .slide.active .slide-subtitle { animation: fadeInUp 0.75s ease 0.12s both; }
     .slide.active .slide-learn-card { animation: fadeInUp 0.7s ease 0.1s both; }
@@ -481,7 +738,6 @@
     .slide.active .slide-stat-caption { animation: fadeIn 0.7s ease 0.25s both; }
     @keyframes fadeInUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes subtleZoom { from { transform: scale(1.04); } to { transform: scale(1.10); } }
     @keyframes frameDrift { from { transform: scale(1.02); } to { transform: scale(1.06); } }
     {% endif %}
 
@@ -508,11 +764,9 @@
     .slide.active .slide-contrast-col:nth-child(2) { animation: fadeInUp 0.6s ease 0.38s both; }
     .slide.active .slide-big-stat { animation: cardPop 0.7s cubic-bezier(.34,1.56,.64,1) 0.12s both; }
     .slide.active .slide-stat-caption { animation: fadeInUp 0.55s ease 0.28s both; }
-    .slide.active.visual-full_bleed_bg .slide-image-wrap .slide-image { animation: mediumDrift 10s ease-in-out both; }
     .slide.active .slide-media-frame .slide-image { animation: frameDriftMed 11s ease-in-out both; }
     @keyframes fadeInUp { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes slideInLeft { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
-    @keyframes mediumDrift { 0% { transform: scale(1.05) translateY(0px); } 100% { transform: scale(1.12) translateY(-12px); } }
     @keyframes frameDriftMed { 0% { transform: scale(1.03) translateY(0px); } 100% { transform: scale(1.08) translateY(-6px); } }
     @keyframes cardPop { from { opacity: 0; transform: translateY(16px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
     {% endif %}
@@ -551,9 +805,19 @@
     {% endif %}
   </style>
 </head>
-<body>
+<body data-animation-level="{{ animation_level }}">
 {% macro slide_inner(slide, slides) %}
-      {% if slide.layout_kind == 'hero' %}
+      {% if slide.layout_kind == 'intro' %}
+      <div class="slide-content slide-content--bookend slide-content--intro">
+        <h1 class="slide-title slide-title--intro">{{ slide.title }}</h1>
+      </div>
+
+      {% elif slide.layout_kind == 'outro' %}
+      <div class="slide-content slide-content--bookend slide-content--outro">
+        <p class="outro-wordmark" aria-label="SudarVid">SudarVid</p>
+      </div>
+
+      {% elif slide.layout_kind == 'hero' %}
       <div class="slide-content">
         <div class="slide-nav-label">
           {{ "%02d" % (slide.index + 1) }} / {{ "%02d" % (slides|length) }}
@@ -686,12 +950,21 @@
       {% endif %}
 {% endmacro %}
 
+  <div id="sudarvid-deck-stage">
+    <div id="deck-viewport">
+      <div id="deck-scale-inner">
   <div id="deck">
+    <div id="slide-progress-bar" aria-hidden="true"></div>
+    <div id="sudarvid-capture-sweep" aria-hidden="true"></div>
     {% for slide in slides %}
     {% set eff = namespace(kind=slide.layout_kind or 'standard') %}
-    {% if eff.kind == 'contrast' and slide.bullets|length < 4 %}{% set eff.kind = 'standard' %}{% endif %}
-    {% if eff.kind == 'stat_focus' and not slide.big_stat %}{% set eff.kind = 'standard' %}{% endif %}
-    {% set vt = slide.visual_template | default('full_bleed_bg') %}
+    {% if eff.kind in ('intro', 'outro') %}
+      {% set vt = 'none' %}
+    {% else %}
+      {% if eff.kind == 'contrast' and slide.bullets|length < 4 %}{% set eff.kind = 'standard' %}{% endif %}
+      {% if eff.kind == 'stat_focus' and not slide.big_stat %}{% set eff.kind = 'standard' %}{% endif %}
+      {% set vt = slide.visual_template | default('full_bleed_bg') %}
+    {% endif %}
     <section
       class="slide layout-{{ eff.kind }} visual-{{ vt }}{% if loop.first %} active{% endif %}"
       data-index="{{ slide.index }}"
@@ -699,6 +972,20 @@
       data-layout="{{ eff.kind }}"
       data-visual-template="{{ vt }}"
     >
+      <div class="slide-ambient" aria-hidden="true">
+        <svg class="ambient-svg" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <radialGradient id="orb-{{ slide.index }}" cx="70%" cy="30%" r="55%">
+              <stop offset="0%" stop-color="{{ theme.accent_color }}" stop-opacity="0.18"/>
+              <stop offset="100%" stop-color="transparent" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <ellipse cx="900" cy="200" rx="500" ry="380" fill="url(#orb-{{ slide.index }})">
+            <animateTransform attributeName="transform" type="translate"
+              values="0 0; -30 20; 0 0" dur="9s" repeatCount="indefinite"/>
+          </ellipse>
+        </svg>
+      </div>
       {% if vt == 'full_bleed_bg' %}
       {% if slide.image_path %}
       <div class="slide-image-wrap">
@@ -785,11 +1072,18 @@
     </section>
     {% endfor %}
   </div>
+      </div>
+    </div>
+  </div>
 
   {% if include_tts %}
   <audio id="SudarVidVoiceover" src="audio/voiceover.mp3" preload="auto"></audio>
   {% endif %}
 
+  <div id="sudarvid-chrome">
+  <div id="sudarvid-caption-wrap">
+    <p id="sudarvid-caption" class="sudarvid-caption" aria-live="polite"></p>
+  </div>
   <div id="sudarvid-player-ui" role="group" aria-label="Presentation playback">
     <button type="button" id="sudarvid-btn-prev" aria-label="Previous slide">Prev</button>
     <button type="button" id="sudarvid-btn-play" aria-label="Play">Play</button>
@@ -798,14 +1092,67 @@
     <span id="sudarvid-time">0:00 / 0:00</span>
     <p id="sudarvid-hint">Space: play/pause · ← →: slides · Home/End: start/end</p>
   </div>
+  </div>
 
   <script>
     window.SUDARVID_SLIDES = [
       {% for slide in slides %}
-      { "index": {{ slide.index }}, "duration": {{ slide.duration_seconds }}, "visual_template": {{ slide.visual_template | default('full_bleed_bg') | tojson }} }{% if not loop.last %},{% endif %}
+      {
+        "index": {{ slide.index }},
+        "duration": {{ slide.duration_seconds }},
+        "visual_template": {{ slide.visual_template | default('full_bleed_bg') | tojson }},
+        "narration": {{ (slide.narration or '') | tojson }},
+        "caption_words": {{ (slide.caption_words or []) | tojson }},
+        "caption_times_ms": {{ (slide.caption_times_ms or []) | tojson }}
+      }{% if not loop.last %},{% endif %}
       {% endfor %}
     ];
+    window.SUDARVID_ANIMATION_LEVEL = {{ animation_level | tojson }};
     window.IS_CAPTURE = false; // overridden by Playwright before load
+  </script>
+  <script>
+    (function () {
+      if (window.IS_CAPTURE) return;
+      function fitDeck() {
+        var stage = document.getElementById("sudarvid-deck-stage");
+        var vp = document.getElementById("deck-viewport");
+        var inner = document.getElementById("deck-scale-inner");
+        var deck = document.getElementById("deck");
+        var chrome = document.getElementById("sudarvid-chrome");
+        if (!stage || !vp || !inner || !deck) return;
+        var w = deck.offsetWidth;
+        var h = deck.offsetHeight;
+        var chromeH = chrome ? chrome.offsetHeight : 0;
+        var pad = 12;
+        var availW = window.innerWidth - pad;
+        var availH = window.innerHeight - chromeH - pad;
+        if (availW <= 0 || availH <= 0) return;
+        var mode = window.SUDARVID_FIT || "cover";
+        var sx = availW / w;
+        var sy = availH / h;
+        var s = mode === "contain" ? Math.min(sx, sy) : Math.max(sx, sy);
+        inner.style.width = w + "px";
+        inner.style.height = h + "px";
+        inner.style.transform =
+          "translate(" + ((availW - w * s) / 2) + "px," + ((availH - h * s) / 2) + "px) scale(" + s + ")";
+        vp.style.width = availW + "px";
+        vp.style.height = availH + "px";
+      }
+      window.addEventListener("resize", fitDeck);
+      var chrome = document.getElementById("sudarvid-chrome");
+      if (chrome && typeof ResizeObserver !== "undefined") {
+        var ro = new ResizeObserver(function () {
+          fitDeck();
+        });
+        ro.observe(chrome);
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", fitDeck);
+      } else {
+        fitDeck();
+      }
+      requestAnimationFrame(fitDeck);
+    })();
   </script>
   <script src="static/js/sudarvid.js"></script>
 </body>

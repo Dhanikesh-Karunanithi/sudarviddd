@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sudar</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #000000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+  }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="300" height="200"></canvas>
+<script>
+const cv = document.getElementById('c');
+const cx = cv.getContext('2d');
+const W = cv.width, H = cv.height, MX = W/2, MY = H/2;
+
+// ── Easings ─────────────────────────────────────────────────────────
+const easeInOutCubic = t => t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
+/** Smooth motion-graphics style (no overshoot) */
+const easeInOutQuint = t =>
+  t < 0.5 ? 16 * t * t * t * t * t : 1 - Math.pow(-2 * t + 2, 5) / 2;
+const lerp = (a,b,t) => a+(b-a)*t;
+const clamp = t => Math.max(0,Math.min(1,t));
+
+// ── Pill (light) — reads on dark overlay / black bg ───────────────────
+// withShadow: bottom pill only; top pill stays crisp (no drop shadow)
+function drawPill(px,py,pw,ph,pr,pa,withShadow) {
+  if (pa <= 0.004) return;
+  cx.save();
+  cx.globalAlpha = pa;
+  if (withShadow) {
+    cx.shadowColor = 'rgba(0,0,0,0.45)';
+    cx.shadowBlur  = 28;
+    cx.shadowOffsetY = 10;
+  }
+  cx.translate(px, py);
+  const r = Math.min(pr, pw/2, ph/2);
+  const x = -pw/2, y = -ph/2;
+  cx.beginPath();
+  cx.moveTo(x+r, y);
+  cx.lineTo(x+pw-r, y);  cx.arcTo(x+pw,y,   x+pw,y+r,   r);
+  cx.lineTo(x+pw,y+ph-r);cx.arcTo(x+pw,y+ph,x+pw-r,y+ph,r);
+  cx.lineTo(x+r,y+ph);   cx.arcTo(x,y+ph,   x,y+ph-r,   r);
+  cx.lineTo(x,y+r);      cx.arcTo(x,y,      x+r,y,      r);
+  cx.closePath();
+  cx.fillStyle = '#f5f5f5';
+  cx.fill();
+  cx.restore();
+}
+
+// ── AI Sparkle Star (dark) — position-only drift (X/Y), no rotation/scale ─
+function drawAIStar(sx,sy,sz,sa) {
+  if (sa <= 0.004) return;
+  cx.save();
+  cx.globalAlpha = sa;
+  cx.translate(sx, sy);
+  cx.shadowColor = 'rgba(255,255,255,0.2)';
+  cx.shadowBlur  = 8;
+  const r = sz, c = r * 0.12;
+  cx.beginPath();
+  cx.moveTo(0,-r);
+  cx.bezierCurveTo( c,-c,  c,-c,  r, 0);
+  cx.bezierCurveTo( c, c,  c, c,  0, r);
+  cx.bezierCurveTo(-c, c, -c, c, -r, 0);
+  cx.bezierCurveTo(-c,-c, -c,-c,  0,-r);
+  cx.closePath();
+  cx.fillStyle = '#000000';
+  cx.fill();
+  cx.restore();
+}
+
+// ── Play Button ──────────────────────────────────────────────────────
+function drawPlay(px,py,sz,pa) {
+  if (pa <= 0.004) return;
+  cx.save();
+  cx.globalAlpha = pa;
+  cx.translate(px, py);
+  cx.beginPath();
+  cx.moveTo(-sz*0.36, -sz*0.50);
+  cx.lineTo( sz*0.62,  0);
+  cx.lineTo(-sz*0.36,  sz*0.50);
+  cx.closePath();
+  cx.fillStyle = '#000000';
+  cx.fill();
+  cx.restore();
+}
+
+// ── Keyframes ─────────────────────────────────────────────────────────
+// S = top pill offset RIGHT, bottom pill offset LEFT
+const KF = {
+  s1: { p1:{x:MX+22,y:MY-28,w:138,h:55,rx:27.5,a:1},
+        p2:{x:MX-22,y:MY+28,w:138,h:55,rx:27.5,a:1},
+        star:{sz:16,a:1}, play:{sz:24,a:0} },
+  s2: { p1:{x:MX,y:MY-19,w:138,h:55,rx:27.5,a:1},
+        p2:{x:MX,y:MY+19,w:138,h:55,rx:27.5,a:1},
+        star:{sz:16,a:1}, play:{sz:24,a:0} },
+  s3: { p1:{x:MX,y:MY,w:152,h:82,rx:41,a:1},
+        p2:{x:MX,y:MY,w:152,h:82,rx:41,a:0},
+        star:{sz:16,a:1}, play:{sz:24,a:0} },
+  s4: { p1:{x:MX,y:MY,w:162,h:100,rx:20,a:1},
+        p2:{x:MX,y:MY,w:162,h:100,rx:20,a:0},
+        star:{sz:16,a:0}, play:{sz:24,a:1} }
+};
+
+function iKF(A, B, t, posE, szE) {
+  posE = posE||easeInOutCubic; szE = szE||easeInOutCubic;
+  const pe = posE(clamp(t)), se = szE(clamp(t)), ae = easeInOutCubic(clamp(t));
+  const lp=(a,b,e)=>lerp(a,b,e);
+  return {
+    p1:{x:lp(A.p1.x,B.p1.x,pe),y:lp(A.p1.y,B.p1.y,pe),
+        w:lp(A.p1.w,B.p1.w,se),h:lp(A.p1.h,B.p1.h,se),
+        rx:lp(A.p1.rx,B.p1.rx,se),a:lp(A.p1.a,B.p1.a,ae)},
+    p2:{x:lp(A.p2.x,B.p2.x,pe),y:lp(A.p2.y,B.p2.y,pe),
+        w:lp(A.p2.w,B.p2.w,se),h:lp(A.p2.h,B.p2.h,se),
+        rx:lp(A.p2.rx,B.p2.rx,se),a:lp(A.p2.a,B.p2.a,ae)},
+    star:{sz:lp(A.star.sz,B.star.sz,se),a:lp(A.star.a,B.star.a,ae)},
+    play:{sz:lp(A.play.sz,B.play.sz,se),a:lp(A.play.a,B.play.a,ae)}
+  };
+}
+
+// ── Timeline ──────────────────────────────────────────────────────────
+// Seamless loop: S → overlap → merge → “video” → reverse, quint easing
+const LOOP = 6400;
+const TL = [
+  {s:0,    e:750,  f:'s1',t:'s1', pe:easeInOutCubic, se:easeInOutCubic},
+  {s:750,  e:1450, f:'s1',t:'s2', pe:easeInOutQuint, se:easeInOutQuint},
+  {s:1450, e:1950, f:'s2',t:'s2', pe:easeInOutCubic, se:easeInOutCubic},
+  {s:1950, e:2650, f:'s2',t:'s3', pe:easeInOutQuint, se:easeInOutQuint},
+  {s:2650, e:3150, f:'s3',t:'s3', pe:easeInOutCubic, se:easeInOutCubic},
+  {s:3150, e:3850, f:'s3',t:'s4', pe:easeInOutQuint, se:easeInOutQuint},
+  {s:3850, e:4650, f:'s4',t:'s4', pe:easeInOutCubic, se:easeInOutCubic},
+  {s:4650, e:5250, f:'s4',t:'s3', pe:easeInOutQuint, se:easeInOutQuint},
+  {s:5250, e:5750, f:'s3',t:'s2', pe:easeInOutQuint, se:easeInOutQuint},
+  {s:5750, e:6400, f:'s2',t:'s1', pe:easeInOutQuint, se:easeInOutQuint},
+];
+
+// ── Render loop ───────────────────────────────────────────────────────
+let t0 = null;
+
+function frame(ts) {
+  if (!t0) t0 = ts;
+  const ms = (ts - t0) % LOOP;
+
+  // find segment
+  let seg = TL[TL.length-1];
+  for (const s of TL) { if (ms >= s.s && ms < s.e) { seg = s; break; } }
+  const prog = clamp((ms - seg.s) / (seg.e - seg.s));
+  const st = iKF(KF[seg.f], KF[seg.t], prog, seg.pe, seg.se);
+
+  // Subtle X/Y drift only (motion-graphics idle, no rotation/scale)
+  const bobX = 1.6 * Math.sin(ts * 0.00175);
+  const bobY = 1.4 * Math.cos(ts * 0.00155);
+
+  // ── Draw ──────────────────────────────────────────────────────────
+  cx.clearRect(0, 0, W, H);
+
+  drawPill(st.p2.x, st.p2.y, st.p2.w, st.p2.h, st.p2.rx, st.p2.a, true);
+  drawPill(st.p1.x, st.p1.y, st.p1.w, st.p1.h, st.p1.rx, st.p1.a, false);
+  drawAIStar(MX + bobX, MY + bobY, st.star.sz, st.star.a);
+  drawPlay(MX, MY, st.play.sz, st.play.a);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sudar – Loading</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #ffffff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+  }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="280" height="180"></canvas>
+<script>
+const cv = document.getElementById('c');
+const cx = cv.getContext('2d');
+const W = cv.width, H = cv.height, MX = W/2, MY = H/2;
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2;
+}
+function easeInOutQuint(t) {
+  return t < 0.5 ? 16 * t * t * t * t * t : 1 - Math.pow(-2 * t + 2, 5) / 2;
+}
+function lerp(a, b, t) { return a + (b - a) * t; }
+function clamp(t) { return Math.max(0, Math.min(1, t)); }
+
+function pill(pcx, pcy, pw, ph, pr, pa, withShadow) {
+  if (pa <= 0.001) return;
+  cx.save();
+  cx.globalAlpha = pa;
+  if (withShadow) {
+    cx.shadowColor = 'rgba(0,0,0,0.22)';
+    cx.shadowBlur = 18;
+    cx.shadowOffsetY = 6;
+  }
+  cx.translate(pcx, pcy);
+  const x = -pw/2, y = -ph/2;
+  const r = Math.min(pr, pw/2, ph/2);
+  cx.beginPath();
+  cx.moveTo(x + r, y);
+  cx.lineTo(x + pw - r, y);
+  cx.arcTo(x+pw, y,   x+pw, y+r,   r);
+  cx.lineTo(x + pw, y + ph - r);
+  cx.arcTo(x+pw, y+ph, x+pw-r, y+ph, r);
+  cx.lineTo(x + r, y + ph);
+  cx.arcTo(x, y+ph, x, y+ph-r, r);
+  cx.lineTo(x, y + r);
+  cx.arcTo(x, y, x+r, y, r);
+  cx.closePath();
+  cx.fillStyle = '#111111';
+  cx.fill();
+  cx.restore();
+}
+
+function aiStar(scx, scy, sz, sa) {
+  if (sa <= 0.001) return;
+  cx.save();
+  cx.globalAlpha = sa;
+  cx.translate(scx, scy);
+  const r = sz, c = r * 0.13;
+  cx.beginPath();
+  cx.moveTo(0, -r);
+  cx.bezierCurveTo( c, -c,  c, -c,  r,  0);
+  cx.bezierCurveTo( c,  c,  c,  c,  0,  r);
+  cx.bezierCurveTo(-c,  c, -c,  c, -r,  0);
+  cx.bezierCurveTo(-c, -c, -c, -c,  0, -r);
+  cx.closePath();
+  cx.fillStyle = '#ffffff';
+  cx.fill();
+  cx.restore();
+}
+
+function playBtn(pcx, pcy, sz, pa) {
+  if (pa <= 0.001) return;
+  cx.save();
+  cx.globalAlpha = pa;
+  cx.translate(pcx, pcy);
+  cx.beginPath();
+  cx.moveTo(-sz * 0.36, -sz * 0.50);
+  cx.lineTo( sz * 0.62,  0);
+  cx.lineTo(-sz * 0.36,  sz * 0.50);
+  cx.closePath();
+  cx.fillStyle = '#ffffff';
+  cx.fill();
+  cx.restore();
+}
+
+const KF = {
+  s1: {
+    p1:   { x: MX+20,  y: MY-27, w:136, h:54, rx:27, a:1 },
+    p2:   { x: MX-20,  y: MY+27, w:136, h:54, rx:27, a:1 },
+    star: { sz:15, a:1 },
+    play: { sz:22, a:0 }
+  },
+  s2: {
+    p1:   { x: MX,     y: MY-19, w:136, h:54, rx:27, a:1 },
+    p2:   { x: MX,     y: MY+19, w:136, h:54, rx:27, a:1 },
+    star: { sz:15, a:1 },
+    play: { sz:22, a:0 }
+  },
+  s3: {
+    p1:   { x: MX,     y: MY,    w:150, h:80, rx:40, a:1 },
+    p2:   { x: MX,     y: MY,    w:150, h:80, rx:40, a:0 },
+    star: { sz:15, a:1 },
+    play: { sz:22, a:0 }
+  },
+  s4: {
+    p1:   { x: MX,     y: MY,    w:160, h:98, rx:20, a:1 },
+    p2:   { x: MX,     y: MY,    w:160, h:98, rx:20, a:0 },
+    star: { sz:15, a:0 },
+    play: { sz:22, a:1 }
+  }
+};
+
+function interp(A, B, t, posEase, sizeEase) {
+  posEase  = posEase  || easeInOutCubic;
+  sizeEase = sizeEase || easeInOutCubic;
+  const pe = posEase(clamp(t));
+  const se = sizeEase(clamp(t));
+  const ae = easeInOutCubic(clamp(t));
+  const ip = (a, b, e) => lerp(a, b, e);
+  return {
+    p1:   { x:  ip(A.p1.x,  B.p1.x,  pe),
+            y:  ip(A.p1.y,  B.p1.y,  pe),
+            w:  ip(A.p1.w,  B.p1.w,  se),
+            h:  ip(A.p1.h,  B.p1.h,  se),
+            rx: ip(A.p1.rx, B.p1.rx, se),
+            a:  ip(A.p1.a,  B.p1.a,  ae) },
+    p2:   { x:  ip(A.p2.x,  B.p2.x,  pe),
+            y:  ip(A.p2.y,  B.p2.y,  pe),
+            w:  ip(A.p2.w,  B.p2.w,  se),
+            h:  ip(A.p2.h,  B.p2.h,  se),
+            rx: ip(A.p2.rx, B.p2.rx, se),
+            a:  ip(A.p2.a,  B.p2.a,  ae) },
+    star: { sz: ip(A.star.sz, B.star.sz, se), a: ip(A.star.a,  B.star.a,  ae) },
+    play: { sz: ip(A.play.sz, B.play.sz, se), a: ip(A.play.a,  B.play.a,  ae) }
+  };
+}
+
+const LOOP = 6400;
+const TL = [
+  [0,    750,  's1','s1', easeInOutCubic,  easeInOutCubic],
+  [750,  1450, 's1','s2', easeInOutQuint,  easeInOutQuint],
+  [1450, 1950, 's2','s2', easeInOutCubic,  easeInOutCubic],
+  [1950, 2650, 's2','s3', easeInOutQuint,  easeInOutQuint],
+  [2650, 3150, 's3','s3', easeInOutCubic,  easeInOutCubic],
+  [3150, 3850, 's3','s4', easeInOutQuint,  easeInOutQuint],
+  [3850, 4650, 's4','s4', easeInOutCubic,  easeInOutCubic],
+  [4650, 5250, 's4','s3', easeInOutQuint,  easeInOutQuint],
+  [5250, 5750, 's3','s2', easeInOutQuint,  easeInOutQuint],
+  [5750, 6400, 's2','s1', easeInOutQuint,  easeInOutQuint],
+];
+
+let t0 = null;
+
+function frame(ts) {
+  if (!t0) t0 = ts;
+  const ms = (ts - t0) % LOOP;
+
+  let seg = TL[TL.length - 1];
+  for (const s of TL) { if (ms >= s[0] && ms < s[1]) { seg = s; break; } }
+  const [ss, se, sf, st, pe, sze] = seg;
+  const prog = clamp((ms - ss) / (se - ss));
+  const state = interp(KF[sf], KF[st], prog, pe, sze);
+
+  const bobX = 1.4 * Math.sin(ts * 0.00175);
+  const bobY = 1.2 * Math.cos(ts * 0.00155);
+
+  cx.clearRect(0, 0, W, H);
+
+  pill(state.p2.x, state.p2.y, state.p2.w, state.p2.h, state.p2.rx, state.p2.a, true);
+  pill(state.p1.x, state.p1.y, state.p1.w, state.p1.h, state.p1.rx, state.p1.a, false);
+  aiStar(MX + bobX, MY + bobY, state.star.sz, state.star.a);
+  playBtn(MX, MY, state.play.sz, state.play.a);
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

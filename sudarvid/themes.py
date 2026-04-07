@@ -234,6 +234,9 @@ def list_themes() -> List[dict]:
             "bg": v.bg_color,
             "accent": v.accent_color,
             "secondary": v.secondary_accent,
+            "text_color": v.text_color,
+            "font_heading": v.font_heading,
+            "google_fonts_url": v.google_fonts_url or "",
         }
         for k, v in THEMES.items()
     ]

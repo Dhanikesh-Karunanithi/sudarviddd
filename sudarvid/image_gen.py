@@ -12,6 +12,7 @@ import requests
 
 from .themes import get_theme
 from .types import GenerationConfig, SlideContent, ThemeId
+from .image_models import DEFAULT_IMAGE_MODEL
 
 
 # Bias toward scenes the diffusion model can render without lettering; avoid poster/magazine wording.
@@ -192,7 +193,7 @@ class ImageGenerator:
         output_dir: str = "output/assets/images",
     ):
         self.api_key = api_key
-        self.model = model or os.environ.get("TOGETHER_IMAGE_MODEL", "black-forest-labs/FLUX.1-schnell")
+        self.model = model or os.environ.get("TOGETHER_IMAGE_MODEL", DEFAULT_IMAGE_MODEL)
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -220,6 +221,11 @@ class ImageGenerator:
 
         for idx, slide in enumerate(slides, start=1):
             slide.image_path = None
+            if getattr(slide, "layout_kind", None) in ("intro", "outro"):
+                if progress_callback:
+                    progress_callback(idx, total)
+                updated.append(slide)
+                continue
             if getattr(slide, "visual_template", None) == "none":
                 if progress_callback:
                     progress_callback(idx, total)

@@ -27,6 +27,14 @@ Invoke-RestMethod -Method Get -Uri "http://localhost:8000/health"
 
 If jobs fail with **`Expecting value: line 1 column 1`** or **“Could not parse slide plan as JSON”**, try **`openai/gpt-oss-20b`** and/or ensure JSON mode is enabled. The planner also merges `content` + reasoning fields and extracts the first `{...}` object when the model adds extra prose.
 
+#### Loader copy model (optional)
+
+The UI progress loader can be personalized per topic (e.g. “Drafting the blueprint…”, “Tuning the engine…”) by generating a **one-shot** “loader copy pack” at job start and streaming it over SSE.
+
+- Set **`TOGETHER_LOADER_MODEL`** to use a cheaper/faster model for loader copy without changing the slide planner model.
+  - If unset, it falls back to `TOGETHER_TEXT_MODEL`.
+  - If the model fails or returns invalid JSON, the server uses a safe deterministic fallback pack.
+
 ### Pedagogy fields (API / YAML)
 
 Optional fields help the planner align with a real curriculum (e.g. from **ByteOS**):
@@ -53,6 +61,9 @@ After the model returns slides, copy is compacted for layout. Defaults are sligh
 ### Image model (Together)
 
 - **Default** image model: **`black-forest-labs/FLUX.1-schnell`** (fast; good for iteration).
+- The creator UI now includes an **Advanced → Image model** picker:
+  - **Auto (recommended)** uses server default (`TOGETHER_IMAGE_MODEL`, then fallback code default).
+  - You can override with any curated Together model from **`GET /image-models`** for that specific job.
 - For **sharper composition** at higher latency/cost, set **`TOGETHER_IMAGE_MODEL`** to a stronger image model available on your Together account (check their model list).
 - **`TOGETHER_IMAGE_STEPS`**: diffusion steps for models that accept `steps` (default `6`). Omitted automatically for **`FLUX.2`** models that reject the parameter.
 - Slide prompts stay **text-free** (words belong on the slide HTML, not in the bitmap). Each UI theme maps to a **style snippet** so backgrounds match the chosen theme.

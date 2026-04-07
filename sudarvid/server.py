@@ -10,18 +10,29 @@ import sys
 import tempfile
 import time
 import uuid
+import zipfile
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
 
 from .core import generate_video
+from .image_models import IMAGE_MODELS, allowed_image_model_ids, normalize_image_model
+from .loader_copy import generate_loader_copy_pack
+from .media import (
+    CURATED_TTS_VOICES,
+    is_allowed_tts_voice,
+    language_presets,
+    preview_audio_cache_path,
+    synthesize_tts_preview_file,
+)
 from .naming import allocate_job_folder_name
 from .themes import list_themes
 from .types import AnimationLevel, GenerationConfig, ThemeId, VideoSize
@@ -247,6 +258,22 @@ async def _run_job(job_id: str, config: GenerationConfig) -> None:
         loop.call_soon_threadsafe(queue.put_nowait, {"event": event, "data": payload})
 
     _set_job_status(job_id, "running")
+    # Emit personalized loader copy ASAP (best-effort; always safe fallback).
+    try:
+        together_api_key = os.environ.get("TOGETHER_API_KEY", "")
+        if together_api_key.strip():
+            pack = await asyncio.to_thread(
+                generate_loader_copy_pack,
+                api_key=together_api_key,
+                topic=config.topic,
+                audience=config.audience,
+                language=config.language,
+                theme_id=config.theme.value,
+            )
+            await _emit_progress(job_id, "loader_copy", pack.to_dict())
+    except Exception:
+        # Never block job execution on loader copy.
+        pass
     await _emit_progress(job_id, "status", {"status": "running", "step": "planning"})
     try:
         _debug_log(
@@ -268,9 +295,23 @@ async def _run_job(job_id: str, config: GenerationConfig) -> None:
         await _emit_progress(job_id, "status", {"status": "done", "step": "done"})
         await asyncio.to_thread(_try_open_slides_html, os.path.join("output", job_id))
     except Exception as e:
-        _set_job_status(job_id, "error", str(e))
-        await _emit_progress(job_id, "status", {"status": "error", "error": str(e)})
-        print(f"[SudarVid] Job {job_id} failed: {e}")
+        output_dir = Path("output").resolve() / job_id
+        slides_path = output_dir / "slides.html"
+        if slides_path.is_file():
+            warning = f"MP4 generation issue: {e}"
+            output_files = _collect_output_files(str(output_dir))
+            _set_output_files(job_id, output_files)
+            _set_job_status(job_id, "done", warning)
+            await _emit_progress(
+                job_id,
+                "status",
+                {"status": "done", "step": "done", "warning": warning, "error": warning},
+            )
+            print(f"[SudarVid] Job {job_id} completed with warning: {e}")
+        else:
+            _set_job_status(job_id, "error", str(e))
+            await _emit_progress(job_id, "status", {"status": "error", "error": str(e)})
+            print(f"[SudarVid] Job {job_id} failed: {e}")
         _debug_log(
             hypothesis_id="H2_model_not_available",
             location="server.py:_run_job:error",
@@ -333,6 +374,11 @@ class GenerateRequest(BaseModel):
         le=7200.0,
         description="Optional target total deck duration; slide timings scale toward this after audio is measured.",
     )
+    image_model: Optional[str] = Field(
+        None,
+        max_length=120,
+        description="Optional Together image model override. Empty/omitted means server auto/default.",
+    )
 
     @field_validator("theme")
     @classmethod
@@ -349,6 +395,16 @@ class GenerateRequest(BaseModel):
         if v not in valid:
             raise ValueError(f"Invalid animation_level '{v}'. Choose from: {valid}")
         return v
+
+    @field_validator("image_model")
+    @classmethod
+    def validate_image_model(cls, v: Optional[str]) -> Optional[str]:
+        normalized = normalize_image_model(v)
+        if normalized is None:
+            return None
+        if normalized not in allowed_image_model_ids():
+            raise ValueError("Invalid image_model. Use GET /image-models for supported ids.")
+        return normalized
 
     def to_generation_config(self) -> GenerationConfig:
         return GenerationConfig(
@@ -371,12 +427,65 @@ class GenerateRequest(BaseModel):
             persona=self.persona,
             voice_override=self.voice_override,
             target_duration_seconds=self.target_duration_seconds,
+            image_model=self.image_model,
         )
+
+
+@app.get("/voices", summary="Languages and curated TTS voices for the creator UI")
+async def get_voices() -> dict:
+    return {"languages": language_presets(), "voices": CURATED_TTS_VOICES}
+
+
+@app.get("/tts/preview", summary="Short MP3 sample for a voice (cached on disk)")
+async def tts_preview(voice: str) -> FileResponse:
+    v = (voice or "").strip()
+    if not is_allowed_tts_voice(v):
+        raise HTTPException(status_code=400, detail="Unknown or invalid voice id.")
+    path = preview_audio_cache_path(v)
+    if not path.is_file():
+        try:
+            await synthesize_tts_preview_file(v, path)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"TTS preview failed: {e}") from e
+    return FileResponse(str(path), media_type="audio/mpeg", filename="preview.mp3")
+
+
+@app.get("/export/{job_id}/bundle.zip", summary="Download job outputs as a zip (excludes frame captures)")
+async def export_job_bundle(job_id: str) -> StreamingResponse:
+    job = _get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+    base = Path(job["output_dir"]).resolve()
+    if not base.is_dir():
+        raise HTTPException(status_code=404, detail="Output folder not found.")
+
+    buf = BytesIO()
+    safe_name = f"{job_id}.zip"
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in base.rglob("*"):
+            if not p.is_file():
+                continue
+            if "frames" in p.parts:
+                continue
+            rel = p.relative_to(base)
+            zf.write(p, rel.as_posix())
+    data = buf.getvalue()
+
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
 
 
 @app.get("/themes", summary="List all available themes")
 async def get_themes() -> list:
     return list_themes()
+
+
+@app.get("/image-models", summary="List curated Together image models for generation")
+async def get_image_models() -> list:
+    return IMAGE_MODELS
 
 
 @app.get("/sizes", summary="List preset video sizes")
@@ -433,6 +542,12 @@ async def preview_job_deck(job_id: str) -> RedirectResponse:
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return RedirectResponse(url=f"/render/{job_id}/slides.html")
+
+
+@app.get("/v/{job_id}", summary="Legacy preview redirect (backward compatibility)")
+async def legacy_v_preview_redirect(job_id: str) -> RedirectResponse:
+    # Older frontend versions redirected to `/v/<job_id>`; keep this working.
+    return RedirectResponse(url=f"/preview/{job_id}")
 
 
 @app.get("/status/{job_id}", summary="Check job status")
@@ -577,15 +692,30 @@ async def render_job_file(job_id: str, filename: str) -> FileResponse:
         path=str(file_path),
         media_type=media_type,
         filename=file_path.name,
+        content_disposition_type="inline",
     )
 
 
 @app.get("/health")
 async def health() -> dict:
+    playwright_chromium_ok = False
+    playwright_note = ""
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            exe = p.chromium.executable_path
+            playwright_chromium_ok = bool(exe and os.path.exists(exe))
+            if not playwright_chromium_ok:
+                playwright_note = "Run: playwright install"
+    except Exception:
+        playwright_note = "Run: playwright install"
     return {
         "status": "ok",
         "ffmpeg": bool(shutil.which("ffmpeg")),
         "ffprobe": bool(shutil.which("ffprobe")),
+        "playwright_chromium_ok": playwright_chromium_ok,
+        "playwright_note": playwright_note,
     }
 
 
