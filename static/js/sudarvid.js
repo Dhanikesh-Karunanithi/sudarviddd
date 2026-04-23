@@ -57,6 +57,7 @@
   var activeCaptionIdx = -1;
   var activeCaptionProgress = -1;
   var activeCaptionTimesMs = null;
+  var activeCaptionWordCount = 0;
 
   function tokenizeCaption(text) {
     return String(text || "")
@@ -76,6 +77,7 @@
       meta && Array.isArray(meta.caption_words) && meta.caption_words.length
         ? meta.caption_words
         : tokenizeCaption(meta && meta.narration ? meta.narration : "");
+    activeCaptionWordCount = tokens.length;
     captionEl.innerHTML = "";
     captionWordEls = [];
     captionTokenCount = tokens.length;
@@ -119,6 +121,14 @@
           break;
         }
       }
+      if (activeCaptionWordCount > activeCaptionTimesMs.length) {
+        // Reconcile sparse boundary streams by proportional extension to token count.
+        var ratio = activeCaptionTimesMs.length / activeCaptionWordCount;
+        upto = Math.min(
+          activeCaptionWordCount - 1,
+          Math.max(upto, Math.floor((upto + 1) / Math.max(0.001, ratio)) - 1)
+        );
+      }
     } else {
       if (Math.abs(p - activeCaptionProgress) < 0.01) return;
       upto = Math.floor(p * captionTokenCount);
@@ -130,6 +140,20 @@
       el.classList.toggle("is-spoken", i < upto);
       el.classList.toggle("is-current", i === upto);
     }
+  }
+
+  function forceCaptionComplete(slideIdx) {
+    if (slideIdx !== activeCaptionIdx) {
+      activeCaptionIdx = slideIdx;
+      renderCaptionForSlide(slideIdx);
+    }
+    if (!captionWordEls.length) return;
+    for (var i = 0; i < captionWordEls.length; i++) {
+      var el = captionWordEls[i];
+      el.classList.toggle("is-spoken", i < captionWordEls.length - 1);
+      el.classList.toggle("is-current", i === captionWordEls.length - 1);
+    }
+    activeCaptionProgress = 0.999;
   }
 
   function runSlideActivated(index) {
@@ -206,6 +230,27 @@
     });
 
     return i;
+  }
+
+  function emitQuizAttemptEvent(detail) {
+    if (!detail || typeof window === "undefined") return;
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage(
+          {
+            type: "sudarvid_quiz_attempt",
+            source: "sudarvid",
+            detail: detail
+          },
+          "*"
+        );
+      }
+    } catch (e) {}
+  }
+
+  function isQuizSlideIndex(index) {
+    const slide = slides[index];
+    return !!(slide && slide.dataset && slide.dataset.layout === "quiz");
   }
 
   if (slides.length === 0) {
@@ -319,6 +364,8 @@
     const btnPrev = document.getElementById("sudarvid-btn-prev");
     const btnPlay = document.getElementById("sudarvid-btn-play");
     const btnNext = document.getElementById("sudarvid-btn-next");
+    const timeline = document.getElementById("sudarvid-timeline");
+    const timelineFill = document.getElementById("sudarvid-timeline-fill");
     const scrub = document.getElementById("sudarvid-scrub");
     const timeLabel = document.getElementById("sudarvid-time");
     const hint = document.getElementById("sudarvid-hint");
@@ -335,6 +382,77 @@
     let rafId = null;
     let scrubbing = false;
     let audioBlocked = false;
+    let endingGuard = false;
+    let playbackEnded = false;
+    let playbackDurationSeconds = totalDurationSeconds;
+    const quizAnswered = new Set();
+
+    function resetQuizState() {
+      quizAnswered.clear();
+      slides.forEach(function (slide) {
+        if (!(slide.dataset && slide.dataset.layout === "quiz")) return;
+        const options = Array.from(slide.querySelectorAll(".quiz-option"));
+        const feedbackEl = slide.querySelector(".quiz-feedback");
+        options.forEach(function (opt) {
+          opt.disabled = false;
+          opt.classList.remove("is-correct", "is-wrong");
+        });
+        if (feedbackEl) {
+          feedbackEl.textContent = "Select an answer to continue.";
+        }
+      });
+    }
+
+    slides.forEach(function (slide, slideIdx) {
+      if (!(slide.dataset && slide.dataset.layout === "quiz")) return;
+      const correctIndex = Number(slide.dataset.quizCorrectIndex || "0");
+      const explanation = String(slide.dataset.quizExplanation || "").trim();
+      const optionEls = Array.from(slide.querySelectorAll(".quiz-option"));
+      const feedbackEl = slide.querySelector(".quiz-feedback");
+      optionEls.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          const picked = Number(btn.dataset.optionIndex || "-1");
+          const isCorrect = picked === correctIndex;
+          const promptEl = slide.querySelector(".slide-subtitle");
+          const optionText = String(btn.textContent || "").trim();
+          const questionText = String((promptEl && promptEl.textContent) || "").trim();
+          optionEls.forEach(function (opt, idx) {
+            opt.disabled = true;
+            opt.classList.remove("is-correct", "is-wrong");
+            if (idx === correctIndex) {
+              opt.classList.add("is-correct");
+            } else if (idx === picked && !isCorrect) {
+              opt.classList.add("is-wrong");
+            }
+          });
+          if (feedbackEl) {
+            if (isCorrect) {
+              feedbackEl.textContent = explanation
+                ? "Correct. " + explanation + " Continuing..."
+                : "Correct. Great job. Continuing...";
+            } else {
+              feedbackEl.textContent = explanation
+                ? "Nice try. " + explanation + " Continuing..."
+                : "Nice try. The highlighted option is the best match. Continuing...";
+            }
+          }
+          emitQuizAttemptEvent({
+            question: questionText,
+            selected_option: optionText,
+            selected_index: picked,
+            correct_index: correctIndex,
+            is_correct: isCorrect,
+            explanation: explanation
+          });
+          quizAnswered.add(slideIdx);
+          if (paused) {
+            window.setTimeout(function () {
+              play();
+            }, 450);
+          }
+        });
+      });
+    });
 
     if (audio) {
       audio.preload = "auto";
@@ -347,9 +465,21 @@
       });
       audio.addEventListener("playing", function () {
         audioBlocked = false;
+        playbackEnded = false;
+        if (Number.isFinite(audio.duration) && audio.duration > 0) {
+          playbackDurationSeconds = Math.max(totalDurationSeconds, audio.duration);
+        }
         if (hint) {
           hint.textContent = "Space: play/pause · ← →: slides · Home/End: start/end";
         }
+      });
+      audio.addEventListener("loadedmetadata", function () {
+        if (Number.isFinite(audio.duration) && audio.duration > 0) {
+          playbackDurationSeconds = Math.max(totalDurationSeconds, audio.duration);
+        }
+      });
+      audio.addEventListener("ended", function () {
+        playbackEnded = true;
       });
     }
 
@@ -373,20 +503,23 @@
 
     function getNowSeconds() {
       if (paused) {
-        return Math.min(timeAtPause, totalDurationSeconds);
+        return Math.min(timeAtPause, playbackDurationSeconds);
       }
       if (audio && useAudioClock && !audio.paused) {
-        return Math.min(audio.currentTime || 0, totalDurationSeconds);
+        return Math.min(audio.currentTime || 0, playbackDurationSeconds);
       }
       return Math.min(
         timeAtPause + (performance.now() - playStartPerf) / 1000,
-        totalDurationSeconds
+        playbackDurationSeconds
       );
     }
 
     function setScrubVisual(seconds) {
       const pct = (seconds / totalDurationSeconds) * 1000;
       scrub.value = String(Math.min(1000, Math.max(0, pct)));
+      if (timelineFill) {
+        timelineFill.style.width = Math.min(100, Math.max(0, (seconds / totalDurationSeconds) * 100)) + "%";
+      }
       timeLabel.textContent =
         formatTime(seconds) + " / " + formatTime(totalDurationSeconds);
     }
@@ -397,6 +530,13 @@
       setDeckProgress(now, totalDurationSeconds);
       const idx = computeSlideIndex(now);
       showSlide(idx);
+      if (isQuizSlideIndex(idx) && !quizAnswered.has(idx) && !paused) {
+        pause();
+        if (hint) {
+          hint.textContent = "Answer the quiz checkpoint to continue.";
+        }
+        return;
+      }
       const start = slideStartTimes[idx] || 0;
       const dur = Math.max(0.001, (slideStartTimes[idx + 1] || totalDurationSeconds) - start);
       updateCaptionProgress(idx, (now - start) / dur, now - start);
@@ -409,19 +549,42 @@
         return;
       }
 
-      if (now >= totalDurationSeconds - 0.05) {
-        timeAtPause = totalDurationSeconds;
-        if (audio) {
-          try {
-            audio.pause();
-            audio.currentTime = totalDurationSeconds;
-          } catch (e) {}
+      if (now >= playbackDurationSeconds - 0.05 || playbackEnded) {
+        if (endingGuard) {
+          return;
         }
-        paused = true;
-        useAudioClock = false;
-        btnPlay.textContent = "Play";
-        btnPlay.setAttribute("aria-label", "Play");
-        setScrubVisual(totalDurationSeconds);
+        endingGuard = true;
+        forceCaptionComplete(idx);
+        const finalize = function () {
+          timeAtPause = playbackDurationSeconds;
+          if (audio) {
+            try {
+              audio.pause();
+              // Leave a tiny buffer to avoid clipping final phoneme tail.
+              audio.currentTime = Math.max(0, playbackDurationSeconds - 0.04);
+            } catch (e) {}
+          }
+          paused = true;
+          useAudioClock = false;
+          playbackEnded = true;
+          btnPlay.textContent = "Replay";
+          btnPlay.setAttribute("aria-label", "Replay");
+          setScrubVisual(playbackDurationSeconds);
+        };
+
+        if (audio && !audio.paused && !audio.ended) {
+          const onEnded = function () {
+            audio.removeEventListener("ended", onEnded);
+            finalize();
+          };
+          audio.addEventListener("ended", onEnded, { once: true });
+          window.setTimeout(function () {
+            audio.removeEventListener("ended", onEnded);
+            finalize();
+          }, 1200);
+        } else {
+          finalize();
+        }
         return;
       }
 
@@ -436,6 +599,11 @@
     }
 
     function syncPlayButton() {
+      if (paused && playbackEnded) {
+        btnPlay.textContent = "Replay";
+        btnPlay.setAttribute("aria-label", "Replay");
+        return;
+      }
       btnPlay.textContent = paused ? "Play" : "Pause";
       btnPlay.setAttribute("aria-label", paused ? "Play" : "Pause");
     }
@@ -457,28 +625,26 @@
           paused = true;
           syncPlayButton();
           if (hint) {
-            hint.textContent = "Space: play/pause · ← →: slides · Home/End: start/end";
+            hint.textContent = "Audio playback is blocked by browser policy. Press Play to retry.";
           }
-          const overlay = document.createElement("div");
-          overlay.style.cssText =
-            "position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;cursor:pointer";
-          overlay.innerHTML =
-            '<div style="background:#fff;padding:2rem 3rem;border-radius:12px;font-size:1.4rem;font-weight:bold;box-shadow:0 8px 32px rgba(0,0,0,0.25);">▶ Click anywhere to play with audio</div>';
-          overlay.addEventListener("click", function () {
-            overlay.remove();
-            play();
-          });
-          document.body.appendChild(overlay);
         });
       }
     }
 
     function play() {
+      endingGuard = false;
+      playbackEnded = false;
       paused = false;
       playStartPerf = performance.now();
       useAudioClock = false;
+      if (audio && audioBlocked && hint) {
+        hint.textContent = "Retrying audio playback…";
+      }
 
       if (audio) {
+        if (timeAtPause >= playbackDurationSeconds - 0.05) {
+          timeAtPause = 0;
+        }
         const onPlaying = function () {
           useAudioClock = true;
         };
@@ -492,8 +658,9 @@
 
     function pause() {
       const now = getNowSeconds();
-      timeAtPause = Math.min(now, totalDurationSeconds);
+      timeAtPause = Math.min(now, playbackDurationSeconds);
       paused = true;
+      endingGuard = false;
       useAudioClock = false;
 
       if (audio) {
@@ -515,6 +682,9 @@
 
     function togglePlayPause() {
       if (paused) {
+        if (playbackEnded) {
+          seekTo(0);
+        }
         play();
       } else {
         pause();
@@ -522,8 +692,12 @@
     }
 
     function seekTo(seconds) {
-      const t = Math.max(0, Math.min(totalDurationSeconds, seconds));
+      const t = Math.max(0, Math.min(playbackDurationSeconds, seconds));
+      if (t <= 0.001) {
+        resetQuizState();
+      }
       timeAtPause = t;
+      playbackEnded = false;
       if (audio) {
         try {
           audio.currentTime = t;
@@ -584,6 +758,7 @@
     scrub.addEventListener("input", function () {
       const sec = (parseFloat(scrub.value) / 1000) * totalDurationSeconds;
       timeAtPause = sec;
+      playbackEnded = false;
       if (audio) {
         try {
           audio.currentTime = sec;
@@ -593,6 +768,15 @@
       timeLabel.textContent =
         formatTime(sec) + " / " + formatTime(totalDurationSeconds);
     });
+
+    if (timeline) {
+      timeline.addEventListener("click", function (e) {
+        var rect = timeline.getBoundingClientRect();
+        if (!rect.width) return;
+        var frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        seekTo(frac * totalDurationSeconds);
+      });
+    }
 
     document.addEventListener("keydown", function (e) {
       if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) {

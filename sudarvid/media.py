@@ -278,6 +278,49 @@ def _normalize_caption_word(w: str) -> str:
     return re.sub(r"^[^\w']+|[^\w']+$", "", (w or "").strip()).lower()
 
 
+def _normalize_caption_timeline(
+    words: list[str], times_ms: list[int], fallback_text: str
+) -> tuple[list[str], list[int]]:
+    """
+    Ensure caption words/timestamps stay valid for player highlighting.
+    - timestamps are monotonic and non-negative
+    - sparse/mismatched boundaries fall back to evenly distributed timings
+    """
+    normalized_words: list[str] = []
+    normalized_times: list[int] = []
+    last_ms = -1
+
+    for w, ms in zip(words, times_ms):
+        nw = _normalize_caption_word(w)
+        if not nw:
+            continue
+        cur = max(0, int(ms))
+        if cur < last_ms:
+            continue
+        normalized_words.append(w.strip())
+        normalized_times.append(cur)
+        last_ms = cur
+
+    # If edge events are too sparse, produce a deterministic fallback timeline.
+    if not normalized_words or len(normalized_words) < max(2, int(len(words) * 0.35)):
+        fallback_tokens = [
+            tok
+            for tok in re.findall(r"[A-Za-z0-9']+", fallback_text or "")
+            if _normalize_caption_word(tok)
+        ]
+        if not fallback_tokens:
+            return normalized_words, normalized_times
+        est_ms = max(450, int(60000 / 170.0))
+        return fallback_tokens, [i * est_ms for i in range(len(fallback_tokens))]
+
+    # Guard against identical timestamp clusters by nudging forward.
+    for i in range(1, len(normalized_times)):
+        if normalized_times[i] <= normalized_times[i - 1]:
+            normalized_times[i] = normalized_times[i - 1] + 1
+
+    return normalized_words, normalized_times
+
+
 async def _synthesize_slide_with_word_times(
     text: str, output_path: str, voice: str
 ) -> tuple[list[str], list[int]]:
@@ -321,15 +364,7 @@ async def _synthesize_slide_with_word_times(
                     words.append(w.strip())
                     times_ms.append(max(0, off_ms))
 
-    # Filter out empty / punctuation-only tokens; keep times aligned
-    filtered_words: list[str] = []
-    filtered_times: list[int] = []
-    for w, ms in zip(words, times_ms):
-        if _normalize_caption_word(w):
-            filtered_words.append(w)
-            filtered_times.append(ms)
-
-    return filtered_words, filtered_times
+    return _normalize_caption_timeline(words, times_ms, t)
 
 
 async def synthesize_all_slides(
@@ -478,7 +513,7 @@ def compute_slide_durations(
     slides: List[SlideContent],
     per_slide_tts_paths: Optional[List[str]] = None,
     silence_between_ms: int = TTS_SILENCE_BETWEEN_MS,
-    last_slide_tail_seconds: float = 0.0,
+    last_slide_tail_seconds: Optional[float] = None,
 ) -> List[SlideContent]:
     """
     Match each slide's on-screen duration to the concatenated voiceover timeline:
@@ -494,6 +529,12 @@ def compute_slide_durations(
 
     n = len(slides)
     gap_sec = silence_between_ms / 1000.0
+    mid_tail_sec = float(os.getenv("SUDARVID_INTER_SLIDE_TAIL_SECONDS", "0.18"))
+    final_tail_sec = (
+        float(os.getenv("SUDARVID_LAST_SLIDE_TAIL_SECONDS", "0.55"))
+        if last_slide_tail_seconds is None
+        else float(last_slide_tail_seconds)
+    )
 
     for i, slide in enumerate(slides):
         if per_slide_tts_paths and i < len(per_slide_tts_paths):
@@ -504,7 +545,7 @@ def compute_slide_durations(
                 except Exception:
                     source_text = slide.narration or slide.title
                     audio_sec = estimate_duration_seconds(source_text)
-                suffix = gap_sec if i < n - 1 else last_slide_tail_seconds
+                suffix = (gap_sec + mid_tail_sec) if i < n - 1 else final_tail_sec
                 slide.duration_seconds = max(0.5, audio_sec + suffix)
                 continue
         slide.duration_seconds = 6.0

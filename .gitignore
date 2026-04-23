@@ -19,6 +19,7 @@ dist/
 
 # Output and generated assets
 output/
+.cache/
 
 # Logs and local DB
 *.log

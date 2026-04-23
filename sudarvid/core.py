@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
 import shutil
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import jinja2
 import yaml
@@ -136,38 +137,206 @@ def _relpath_posix(path: str, base_dir: str) -> str:
 
 
 def _inject_bookend_slides(config: GenerationConfig, slides: List[SlideContent]) -> List[SlideContent]:
-    """Prepend intro and append outro slides (fixed ~2s each, no images)."""
+    """Prepend intro and append branded outro slides (fixed short durations, no images)."""
     if not slides:
         return slides
     topic = (config.topic or "Presentation").strip() or "Presentation"
     intro = SlideContent(
         index=0,
-        title=topic[:200],
+        title=f"Welcome to {topic[:170]}",
         bullets=[],
-        narration="Let's begin.",
+        narration=f"Welcome to Sudar. In this course, we will learn about {topic}. Let's begin.",
         image_prompt="",
         image_path=None,
-        duration_seconds=2.0,
+        duration_seconds=2.8,
         layout_kind="intro",
         visual_template="none",
-        subtitle=None,
+        subtitle="Powered by SudarVid",
     )
     shifted: List[SlideContent] = []
     for j, s in enumerate(slides):
         shifted.append(replace(s, index=j + 1))
     outro = SlideContent(
         index=len(shifted) + 1,
-        title="SudarVid",
+        title="Sudar",
         bullets=[],
-        narration="Thanks for watching.",
+        narration="Thanks for learning with Sudar.",
         image_prompt="",
         image_path=None,
-        duration_seconds=2.0,
+        duration_seconds=2.6,
         layout_kind="outro",
         visual_template="none",
         subtitle=None,
     )
     return [intro] + shifted + [outro]
+
+
+def _inject_quiz_checkpoints(slides: List[SlideContent]) -> List[SlideContent]:
+    """Insert quiz slides from config (if present), else auto-generate checkpoints."""
+    if len(slides) < 2:
+        return slides
+
+    cadence = max(2, int(os.getenv("SUDARVID_QUIZ_CADENCE", "2")))
+    output: List[SlideContent] = []
+    for s in slides:
+        output.append(s)
+        if s.index > 0 and s.index % cadence == 0 and s.bullets:
+            options = [b.strip() for b in s.bullets if (b or "").strip()]
+            if len(options) < 2:
+                continue
+            options = options[:4]
+            rng = random.Random(f"{s.title}|{s.index}|{len(options)}")
+            correct_answer = options[0]
+            rng.shuffle(options)
+            correct_index = options.index(correct_answer)
+            quiz_slide = SlideContent(
+                index=0,  # reindexed below
+                title="Quick Checkpoint",
+                bullets=options,
+                narration="",
+                image_prompt="",
+                image_path=None,
+                duration_seconds=8.0,
+                layout_kind="quiz",
+                visual_template="none",
+                subtitle=f"Which option best matches: {s.title}",
+            )
+            setattr(quiz_slide, "quiz_correct_index", correct_index)
+            setattr(
+                quiz_slide,
+                "quiz_explanation",
+                f"The best answer is: {correct_answer}",
+            )
+            output.append(quiz_slide)
+
+    reindexed: List[SlideContent] = []
+    for idx, slide in enumerate(output):
+        reindexed.append(replace(slide, index=idx))
+    return reindexed
+
+
+def _iter_quiz_dicts(payload: Any) -> List[Dict[str, Any]]:
+    """Recursively collect quiz-like dictionaries from arbitrary payloads."""
+    if payload is None:
+        return []
+    if isinstance(payload, dict):
+        out: List[Dict[str, Any]] = []
+        if any(k in payload for k in ("question", "options", "choices", "answers", "correct")):
+            out.append(payload)
+        for key in ("quiz", "quizzes", "questions", "module_quiz", "moduleQuiz", "quiz_questions"):
+            if key in payload:
+                out.extend(_iter_quiz_dicts(payload.get(key)))
+        for value in payload.values():
+            if isinstance(value, (dict, list)):
+                out.extend(_iter_quiz_dicts(value))
+        return out
+    if isinstance(payload, list):
+        out = []
+        for item in payload:
+            out.extend(_iter_quiz_dicts(item))
+        return out
+    return []
+
+
+def _extract_module_quiz_items(config: GenerationConfig) -> List[Dict[str, Any]]:
+    """Read module quiz JSON when available in custom_content/source_notes."""
+    candidates: List[Any] = [getattr(config, "custom_content", None), getattr(config, "source_notes", None)]
+    items: List[Dict[str, Any]] = []
+    for payload in candidates:
+        if isinstance(payload, str):
+            try:
+                parsed = json.loads(payload)
+            except Exception:
+                parsed = None
+            if parsed is not None:
+                items.extend(_iter_quiz_dicts(parsed))
+        elif isinstance(payload, (dict, list)):
+            items.extend(_iter_quiz_dicts(payload))
+    return items
+
+
+def _build_quiz_slide_from_item(item: Dict[str, Any], idx_seed: int) -> Optional[SlideContent]:
+    q = str(item.get("question") or item.get("prompt") or "").strip()
+    if not q:
+        return None
+
+    raw_options = (
+        item.get("options")
+        or item.get("choices")
+        or item.get("answers")
+        or item.get("answer_options")
+        or []
+    )
+    options: List[str] = []
+    if isinstance(raw_options, list):
+        for opt in raw_options:
+            if isinstance(opt, dict):
+                text = str(opt.get("text") or opt.get("label") or "").strip()
+            else:
+                text = str(opt).strip()
+            if text:
+                options.append(text)
+    if len(options) < 2:
+        return None
+    options = options[:4]
+
+    correct_raw = item.get("correct") or item.get("correct_answer") or item.get("answer")
+    if isinstance(correct_raw, int):
+        correct_idx_orig = max(0, min(len(options) - 1, int(correct_raw)))
+        correct_answer = options[correct_idx_orig]
+    else:
+        correct_answer = str(correct_raw or options[0]).strip()
+        if correct_answer not in options:
+            correct_answer = options[0]
+
+    rng = random.Random(f"{q}|{idx_seed}|{len(options)}")
+    rng.shuffle(options)
+    correct_idx = options.index(correct_answer)
+    explanation = str(item.get("explanation") or item.get("reason") or f"The best answer is: {correct_answer}").strip()
+
+    slide = SlideContent(
+        index=0,
+        title="Quick Checkpoint",
+        bullets=options,
+        narration="",
+        image_prompt="",
+        image_path=None,
+        duration_seconds=10.0,
+        layout_kind="quiz",
+        visual_template="none",
+        subtitle=q,
+    )
+    setattr(slide, "quiz_correct_index", correct_idx)
+    setattr(slide, "quiz_explanation", explanation)
+    return slide
+
+
+def _inject_module_quiz_slides(config: GenerationConfig, slides: List[SlideContent]) -> List[SlideContent]:
+    quiz_items = _extract_module_quiz_items(config)
+    if not quiz_items:
+        return _inject_quiz_checkpoints(slides)
+
+    cadence = max(2, int(os.getenv("SUDARVID_QUIZ_CADENCE", "2")))
+    quiz_slides: List[SlideContent] = []
+    for i, item in enumerate(quiz_items):
+        q_slide = _build_quiz_slide_from_item(item, idx_seed=i)
+        if q_slide is not None:
+            quiz_slides.append(q_slide)
+    if not quiz_slides:
+        return _inject_quiz_checkpoints(slides)
+
+    output: List[SlideContent] = []
+    q_idx = 0
+    for s in slides:
+        output.append(s)
+        if s.index > 0 and s.index % cadence == 0 and q_idx < len(quiz_slides):
+            output.append(quiz_slides[q_idx])
+            q_idx += 1
+
+    reindexed: List[SlideContent] = []
+    for idx, slide in enumerate(output):
+        reindexed.append(replace(slide, index=idx))
+    return reindexed
 
 
 def _apply_target_duration_seconds(slides: List[SlideContent], target: float) -> None:
@@ -197,6 +366,7 @@ def generate_video(
     planner = ContentPlanner(api_key=together_api_key)
     report("planning", {"message": "Planning slides"})
     slides = planner.plan_slides(config)
+    slides = _inject_module_quiz_slides(config, slides)
     slides = _inject_bookend_slides(config, slides)
 
     images_dir = os.path.join(output_dir, "assets", "images")
