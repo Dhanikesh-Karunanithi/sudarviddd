@@ -566,6 +566,18 @@ async function renderHome() {
                   <p id="imageModelHelp" class="field-help">
                     Auto uses server default (<code>TOGETHER_IMAGE_MODEL</code>).
                   </p>
+                  <label class="field-label" for="engineMode">Generation engine</label>
+                  <select id="engineMode" class="field-input" aria-describedby="engineModeHelp">
+                    <option value="classic" selected>Classic (default)</option>
+                    <option value="premium">Premium (scaffolded planning)</option>
+                  </select>
+                  <p id="engineModeHelp" class="field-help">
+                    Matches Sudar Learn <code>SUDARVID_ENGINE_MODE</code> contract (<code>POST /generate</code> → <code>engine_mode</code>).
+                  </p>
+                  <label class="field-label"><input type="checkbox" id="engineFallbackClassic" /> Retry with Classic if Premium start fails</label>
+                  <p class="field-help">Parallels Learn <code>SUDARVID_HTTP_FALLBACK_ENABLED</code> for job start failures only.</p>
+                  <label class="field-label"><input type="checkbox" id="outputMp4" checked /> Encode MP4 file</label>
+                  <p class="field-help">Sudar Learn watch flow often uses deck-only (<code>output_mp4: false</code>); creators usually keep this on.</p>
                   <span class="field-label">Video format</span>
                   <div class="video-format-grid" id="videoFormatGrid" role="radiogroup" aria-label="Video format"></div>
                   <select id="videoSize" class="field-input visually-hidden" aria-hidden="true" tabindex="-1"></select>
@@ -582,7 +594,10 @@ async function renderHome() {
         <div id="progress-card-holder" hidden>
           <div id="progress-card" class="card progress-card">
             <h3>Progress</h3>
-            <p class="muted progress-sub">Follow each stage of your video.</p>
+            <p class="muted progress-sub">
+              Follow each stage of your video.
+              <span id="engineModeBadge" class="engine-mode-badge" hidden aria-live="polite"></span>
+            </p>
 
             <div id="errorCard" class="error-card" hidden>
               <div class="error-card-row">
@@ -725,6 +740,36 @@ async function renderHome() {
   }
   imageModelSelect.addEventListener("change", updateImageModelHelp);
   updateImageModelHelp();
+
+  const ENGINE_MODE_LS = "sudarvid_standalone_engine_mode";
+  const ENGINE_FALLBACK_LS = "sudarvid_standalone_engine_fallback";
+  const engineModeSelect = document.getElementById("engineMode");
+  const engineFallbackEl = document.getElementById("engineFallbackClassic");
+  try {
+    const savedMode = localStorage.getItem(ENGINE_MODE_LS);
+    if (savedMode === "premium" || savedMode === "classic") engineModeSelect.value = savedMode;
+  } catch {
+    /* ignore */
+  }
+  try {
+    engineFallbackEl.checked = localStorage.getItem(ENGINE_FALLBACK_LS) === "1";
+  } catch {
+    /* ignore */
+  }
+  engineModeSelect.addEventListener("change", () => {
+    try {
+      localStorage.setItem(ENGINE_MODE_LS, engineModeSelect.value);
+    } catch {
+      /* ignore */
+    }
+  });
+  engineFallbackEl.addEventListener("change", () => {
+    try {
+      localStorage.setItem(ENGINE_FALLBACK_LS, engineFallbackEl.checked ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  });
 
   document.getElementById("btnVoiceSample").addEventListener("click", async () => {
     let vid = voiceSelect.value.trim();
@@ -1001,6 +1046,11 @@ async function renderHome() {
 
     hideError();
     hideWarning();
+    const engineBadgeEl = document.getElementById("engineModeBadge");
+    if (engineBadgeEl) {
+      engineBadgeEl.hidden = true;
+      engineBadgeEl.textContent = "";
+    }
     setRecoveryActionsVisible(false);
     if (floatingPreviewPanel) floatingPreviewPanel.hidden = true;
     if (floatingPreviewFrame) floatingPreviewFrame.src = "";
@@ -1019,41 +1069,75 @@ async function renderHome() {
     const voiceOverride = document.getElementById("voiceOverride").value.trim();
     const imageModel = imageModelSelect.value.trim();
 
+    const requestedEngineMode = engineModeSelect.value === "premium" ? "premium" : "classic";
+    const outputMp4Checked = document.getElementById("outputMp4").checked;
+
     lastJobPrefs = {
       topic,
       audience: state.audience,
       length: state.length,
-      theme: state.theme
-    };
-
-    const body = {
-      topic,
-      audience: audienceLabel(state.audience),
-      language: document.getElementById("language").value.trim() || "en",
       theme: state.theme,
-      slide_count: len.slide_count,
-      video_size,
-      animation_level: document.getElementById("animationLevel").value,
-      include_tts: includeTts,
-      include_music: false,
-      output_html: true,
-      output_mp4: true,
-      target_duration_seconds: len.target_duration_seconds
+      engine_mode: requestedEngineMode,
+      engine_fallback: engineFallbackEl.checked,
+      output_mp4: outputMp4Checked,
     };
-    if (voiceOverride) body.voice_override = voiceOverride;
-    if (imageModel) body.image_model = imageModel;
 
-    try {
+    function buildGenerateBody(engineMode) {
+      /** @type {Record<string, unknown>} */
+      const b = {
+        topic,
+        audience: audienceLabel(state.audience),
+        language: document.getElementById("language").value.trim() || "en",
+        theme: state.theme,
+        slide_count: len.slide_count,
+        video_size,
+        animation_level: document.getElementById("animationLevel").value,
+        include_tts: includeTts,
+        include_music: false,
+        output_html: true,
+        output_mp4: outputMp4Checked,
+        target_duration_seconds: len.target_duration_seconds,
+        engine_mode: engineMode,
+      };
+      if (voiceOverride) b.voice_override = voiceOverride;
+      if (imageModel) b.image_model = imageModel;
+      return b;
+    }
+
+    /** @returns {Promise<{ res: Response, data: Record<string, unknown> }>} */
+    async function postGenerate(engineMode) {
+      const payload = buildGenerateBody(engineMode);
       const res = await fetch("/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
+        body: JSON.stringify(payload),
       });
-      let data = {};
+      let parsed = {};
       try {
-        data = await res.json();
+        parsed = await res.json();
       } catch {
         /* non-JSON */
+      }
+      return { res, data: parsed };
+    }
+
+    function setEngineModeBadge(requestedMode, data, fallbackUsed) {
+      if (!engineBadgeEl) return;
+      const metaMode =
+        data.meta && typeof data.meta.engine_mode === "string" ? data.meta.engine_mode : null;
+      const effective = metaMode || (fallbackUsed ? "classic" : requestedMode);
+      let text = ` · Engine: ${effective}`;
+      if (fallbackUsed) text += " (fallback from premium)";
+      engineBadgeEl.textContent = text;
+      engineBadgeEl.hidden = false;
+    }
+
+    try {
+      let fallbackUsed = false;
+      let { res, data } = await postGenerate(requestedEngineMode);
+      if (!res.ok && requestedEngineMode === "premium" && engineFallbackEl.checked) {
+        fallbackUsed = true;
+        ({ res, data } = await postGenerate("classic"));
       }
       if (!res.ok) {
         const detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || "");
@@ -1072,12 +1156,24 @@ async function renderHome() {
         return;
       }
 
+      const jobId = data.job_id;
+      if (!jobId || typeof jobId !== "string") {
+        showError("", "Unexpected response from server (missing job_id). Try again.");
+        setLoading(overlay, false, "", 0);
+        state.generating = false;
+        document.getElementById("btnGenerate").disabled = false;
+        resetProgressSteps();
+        return;
+      }
+
+      setEngineModeBadge(requestedEngineMode, data, fallbackUsed);
+
       progressPct = 12;
-      lastAttemptedJobId = data.job_id;
+      lastAttemptedJobId = jobId;
       setJobProgress(progressPct);
       setLoading(overlay, true, "Queued — plotting your scenes…", progressPct);
 
-      const stream = new EventSource(`/stream/${encodeURIComponent(data.job_id)}`);
+      const stream = new EventSource(`/stream/${encodeURIComponent(jobId)}`);
       let streamDone = false;
 
       stream.addEventListener("loader_copy", (evt) => {
@@ -1226,7 +1322,7 @@ async function renderHome() {
             setLoading(overlay, false, "", 0);
             state.generating = false;
             document.getElementById("btnGenerate").disabled = false;
-            window.location.assign(`/preview/${encodeURIComponent(data.job_id)}`);
+            window.location.assign(`/preview/${encodeURIComponent(jobId)}`);
           }, 600);
         }
         if (payload.status === "error" && !streamDone) {
@@ -1269,6 +1365,16 @@ async function renderHome() {
       state.audience = lastJobPrefs.audience;
       state.length = lastJobPrefs.length;
       state.theme = lastJobPrefs.theme;
+      if (typeof lastJobPrefs.engine_mode === "string" && engineModeSelect) {
+        engineModeSelect.value = lastJobPrefs.engine_mode === "premium" ? "premium" : "classic";
+      }
+      if (typeof lastJobPrefs.engine_fallback === "boolean" && engineFallbackEl) {
+        engineFallbackEl.checked = lastJobPrefs.engine_fallback;
+      }
+      const outMp4 = document.getElementById("outputMp4");
+      if (outMp4 && typeof lastJobPrefs.output_mp4 === "boolean") {
+        outMp4.checked = lastJobPrefs.output_mp4;
+      }
       selectChip(document.getElementById("chips-audience"), state.audience);
       selectChip(document.getElementById("chips-length"), state.length);
       for (const el of themesRoot.querySelectorAll(".theme-preview-card")) {

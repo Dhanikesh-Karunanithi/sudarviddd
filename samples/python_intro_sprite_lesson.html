@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Python Lesson Modern Player</title>
+<style>
+body{margin:0;background:#0f172a;color:#e2e8f0;font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;padding:20px}
+.root{width:min(1000px,96vw);margin:0 auto;border:2px solid #0b1220;border-radius:14px;overflow:hidden;background:#111f38}
+.top{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#0b1529;color:#f8fafc}
+.title{font-size:15px;font-weight:700}
+.score{color:#ffd43b;font-weight:700}
+.screen{padding:24px 28px;min-height:250px;background:linear-gradient(140deg,#131e34,#0f172a)}
+.tag{text-transform:uppercase;letter-spacing:2px;font-size:10px;color:#ffd43b;font-weight:700}
+.meta{margin:10px 0 14px;font-size:12px;color:#bfdbfe}
+.txt{font-size:clamp(15px,1.45vw,18px);line-height:1.7;max-width:760px}
+.quiz{margin-top:16px;padding:12px;border:1px solid rgba(255,255,255,.2);border-radius:10px;background:#0f1a2d}
+.quiz button{display:block;width:100%;margin-top:8px;text-align:left}
+.player{padding:12px 14px;background:#0c1629;border-top:1px solid #000}
+.playerTop{display:flex;gap:12px;align-items:center}
+.timeline{height:8px;background:#30415f;border-radius:999px;flex:1;overflow:hidden}
+.timeline>div{height:100%;width:38%;background:#3776ab}
+.chap{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.pill{font-size:11px;padding:3px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:#12213b;color:#bfdbfe}
+.controls{display:flex;justify-content:space-between;padding:10px 14px;background:#081325;border-top:1px solid #000}
+button{border:1px solid rgba(255,255,255,.35);background:#132741;color:#fff;padding:7px 12px;border-radius:7px;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="root">
+  <div class="top">
+    <div class="title">Introduction to Python — Modern Player Lesson</div>
+    <div class="score">XP × 14</div>
+  </div>
+  <div class="screen">
+    <div class="tag">Lesson 04 / 10</div>
+    <div class="meta">STEP 2 — VARIABLES</div>
+    <div class="txt">Variables are labeled boxes for information. In Python, <code>name = "Asha"</code> means the box called <code>name</code> stores the value Asha.</div>
+    <div class="quiz">
+      <strong>Quick check</strong>
+      <button>Variables can store text and numbers.</button>
+      <button>Variables cannot store words.</button>
+      <button>Python ignores variable names.</button>
+    </div>
+  </div>
+  <div class="player">
+    <div class="playerTop">
+      <button>Pause</button>
+      <div class="timeline"><div></div></div>
+      <div>0:28 / 1:10</div>
+    </div>
+    <div class="chap">
+      <span class="pill">START</span><span class="pill">STEP 1</span><span class="pill">STEP 2</span><span class="pill">STEP 3</span><span class="pill">QUIZ</span>
+    </div>
+  </div>
+  <div class="controls">
+    <button>◀ Previous Chapter</button>
+    <button>Next Chapter ▶</button>
+  </div>
+</div>
+</body>
+</html>

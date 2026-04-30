@@ -32,6 +32,11 @@ class AnimationLevel(str, Enum):
     DYNAMIC = "dynamic"
 
 
+class EngineMode(str, Enum):
+    CLASSIC = "classic"
+    PREMIUM = "premium"
+
+
 @dataclass
 class VideoSize:
     width: int
@@ -59,6 +64,12 @@ class SlideContent:
     # When present, caption_words[i] is spoken starting at caption_times_ms[i] (milliseconds from slide start).
     caption_words: Optional[List[str]] = None
     caption_times_ms: Optional[List[int]] = None
+    # Premium interaction metadata (optional; ignored by classic template/runtime).
+    interaction_type: Optional[str] = None
+    interaction_prompt: Optional[str] = None
+    interaction_options: Optional[List[str]] = None
+    interaction_correct_index: Optional[int] = None
+    interaction_explanation: Optional[str] = None
 
 
 @dataclass
@@ -87,4 +98,6 @@ class GenerationConfig:
     voice_override: Optional[str] = None
     # Together image model id; when None, server/env default applies.
     image_model: Optional[str] = None
+    # Rendering/planning pathway: classic slide deck vs premium course-scene planning.
+    engine_mode: EngineMode = EngineMode.CLASSIC
 

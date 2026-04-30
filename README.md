@@ -45,6 +45,7 @@ Optional fields help the planner align with a real curriculum (e.g. from **ByteO
 | `difficulty` | e.g. `beginner`, `intermediate`, `advanced` |
 | `source_notes` | Curriculum excerpt or facts the deck must respect |
 | `constraints` | Include/avoid topics, jargon limits, exam board, etc. |
+| `engine_mode` | `classic` (default) or `premium` (scaffolded premium planning path) |
 
 YAML configs ([`core.load_config`](sudarvid/core.py)) accept the same keys under the top-level object. The HTTP **`POST /generate`** body includes these fields as optional JSON properties.
 
@@ -70,7 +71,7 @@ After the model returns slides, copy is compacted for layout. Defaults are sligh
 
 ### ByteOS integration
 
-Use SudarVid as a **library** (`sudarvid.core.generate_video` with a `GenerationConfig`) or as an **HTTP service** (`POST /generate` then poll `GET /status/{job_id}`).
+Use SudarVid as a **library** (`sudarvid.core.generate_video` with a `GenerationConfig`) or as an **HTTP service** (`POST /generate` then poll `GET /status/{job_id}`). The bundled **standalone creator UI** (`frontend/`, mounted at `/`) and **Sudar Learn** Watch generation both ultimately call **`POST /generate`**; configure `engine_mode`, `output_mp4`, and optional curriculum fields (`learning_objectives`, …) per surface (`sudar-learn` env vs Advanced panel in the standalone app). See also [`docs/SUDARVID_INTEGRATION_RUNBOOK.md`](../docs/SUDARVID_INTEGRATION_RUNBOOK.md).
 
 **Environment**
 
@@ -104,11 +105,30 @@ Example **`POST /generate`** body with curriculum context:
   "difficulty": "beginner",
   "source_notes": "Cell membrane; semi-permeable; water potential (informal).",
   "constraints": "No clinical claims; keep to single-cell examples.",
+  "engine_mode": "classic",
   "include_tts": true,
   "output_html": true,
   "output_mp4": false
 }
 ```
+
+To try the premium scene runtime pathway (scaffolded), set:
+
+```json
+{
+  "engine_mode": "premium"
+}
+```
+
+`engine_mode` defaults to `"classic"` for backward compatibility.
+
+Premium mode now supports optional interaction fields in planner output (used by the premium runtime):
+
+- `interaction_type` (`none`, `reflect`, `decision`, `checkpoint`)
+- `interaction_prompt`
+- `interaction_options` (2-4 options)
+- `interaction_correct_index`
+- `interaction_explanation`
 
 If **`slides.html` is empty** (no slides, no audio): the model often returned `"slides": []`, **`slides": null`**, or used a wrong key. The planner now reads several keys (`slides`, `slide`, `deck`, …), coerces a single object into a one-item list, and **falls back to a topic-based placeholder deck** so the job still produces playable HTML. Check the server stderr for **`[SudarVid] WARNING: Slide plan JSON contained no usable slides`**. Image API errors no longer cancel the whole job; failed slides simply have no background image.
 
@@ -154,6 +174,52 @@ Open:
 
 The HTML uses the generated audio and the slide timing data to play like a video.
 
+## Sprite lesson system (dynamic templates)
+
+SudarVid now includes a dynamic sprite/microlearning renderer with adaptive template and theme selection.
+
+### Available routes
+
+- Static upgraded sample: `GET /samples/python-intro-sprite`
+- HTML generation API: `POST /generate-sprite-lesson`
+- Template metadata: `GET /sprite/templates`
+- Theme metadata: `GET /sprite/themes`
+- Per-template preview: `GET /samples/sprite-template/{template_id}?topic=...`
+
+### Supported template ids
+
+- `player_lesson_modern`
+- `ide_walkthrough`
+- `concept_cards_motion`
+- `quiz_showcase`
+- `sprite_quest`
+- `cinematic_cards`
+- `minimal_pro`
+
+### Supported generation controls
+
+- `template_id` (optional; auto-selected if omitted)
+- `theme_id` (optional; topic-adaptive default if omitted)
+- `topic_family` (optional: programming/science/history/finance/general)
+- `sprite_mode` (`auto`, `library_only`, `ai_preferred`)
+- `motion_level` (`low`, `medium`, `high`)
+- `text_density` (`compact`, `balanced`, `detailed`)
+
+### Example request
+
+```json
+{
+  "topic": "Introduction to Python for absolute beginners",
+  "objective": "Help first-time learners understand Python using real-world examples.",
+  "score_label": "XP",
+  "sprite_mode": "auto",
+  "motion_level": "medium",
+  "text_density": "balanced"
+}
+```
+
+The endpoint returns self-contained HTML that can be embedded directly in an iframe or persisted as a generated lesson artifact.
+
 ## Export MP4 video (requires ffmpeg + ffprobe)
 
 MP4 export depends on `ffmpeg` and `ffprobe` being available on your `PATH`.
@@ -164,4 +230,15 @@ When you want MP4, set:
 
 - `output_mp4 = $true`
 - `output_html = $true` (recommended)
+
+## Premium course engine docs
+
+For upgrading SudarVid to generate premium, interactive, learning-first video lessons (while keeping standalone + integrated operation), see:
+
+- [`docs/COURSE_GENERATION_LEARNINGS.md`](docs/COURSE_GENERATION_LEARNINGS.md)
+- [`docs/PREMIUM_VIDEO_COURSE_SPEC.md`](docs/PREMIUM_VIDEO_COURSE_SPEC.md)
+- [`docs/SUDARVID_STANDALONE_AND_INTEGRATION_ARCHITECTURE.md`](docs/SUDARVID_STANDALONE_AND_INTEGRATION_ARCHITECTURE.md)
+- [`docs/IMPLEMENTATION_ROADMAP.md`](docs/IMPLEMENTATION_ROADMAP.md)
+- [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md)
+- [`docs/PREMIUM_SMOKE_TEST.md`](docs/PREMIUM_SMOKE_TEST.md)
 

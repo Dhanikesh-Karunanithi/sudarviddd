@@ -30,7 +30,7 @@ from .media import (
     synthesize_deck_voiceover,
 )
 from .themes import get_theme
-from .types import AnimationLevel, GenerationConfig, SlideContent, ThemeId, VideoSize
+from .types import AnimationLevel, EngineMode, GenerationConfig, SlideContent, ThemeId, VideoSize
 
 
 def load_config(path: str) -> GenerationConfig:
@@ -60,6 +60,7 @@ def load_config(path: str) -> GenerationConfig:
         persona=data.get("persona"),
         voice_override=data.get("voice_override"),
         image_model=data.get("image_model"),
+        engine_mode=EngineMode(data.get("engine_mode", "classic")),
     )
 
 
@@ -83,7 +84,10 @@ def render_html_deck(
     repo_root = Path(__file__).resolve().parents[1]
     template_dir_path = Path(template_dir) if template_dir else (repo_root / "templates")
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(template_dir_path)), autoescape=True)
-    tpl = env.get_template("base.html.j2")
+    template_name = "base.html.j2"
+    if getattr(config, "engine_mode", None) is not None and config.engine_mode.value == "premium":
+        template_name = "premium_base.html.j2"
+    tpl = env.get_template(template_name)
 
     _ensure_job_static(output_dir)
 
@@ -103,6 +107,7 @@ def render_html_deck(
         animation_level=config.animation_level.value,
         include_tts=config.include_tts,
         output_mp4=config.output_mp4,
+        engine_mode=config.engine_mode.value,
         slides=slides,
     )
 
@@ -123,6 +128,7 @@ def write_slides_manifest(output_dir: str, slides: List[SlideContent]) -> str:
             "narration": s.narration,
             "layout_kind": s.layout_kind,
             "visual_template": getattr(s, "visual_template", "full_bleed_bg"),
+            "interaction_type": getattr(s, "interaction_type", None),
             "duration_seconds": s.duration_seconds,
         }
         for s in slides
@@ -134,6 +140,36 @@ def write_slides_manifest(output_dir: str, slides: List[SlideContent]) -> str:
 
 def _relpath_posix(path: str, base_dir: str) -> str:
     return Path(path).resolve().relative_to(Path(base_dir).resolve()).as_posix()
+
+
+def _sanitize_premium_interactions(slides: List[SlideContent]) -> None:
+    """Normalize premium interaction metadata so invalid planner output cannot break rendering/export."""
+    for s in slides:
+        raw_type = (getattr(s, "interaction_type", None) or "none")
+        i_type = str(raw_type).strip().lower()
+        if i_type not in {"none", "reflect", "decision", "checkpoint"}:
+            i_type = "none"
+        setattr(s, "interaction_type", i_type)
+
+        raw_opts = getattr(s, "interaction_options", None)
+        opts: List[str] = []
+        if isinstance(raw_opts, list):
+            opts = [str(o).strip() for o in raw_opts if str(o).strip()][:4]
+        setattr(s, "interaction_options", opts or None)
+
+        raw_prompt = getattr(s, "interaction_prompt", None)
+        prompt = str(raw_prompt).strip()[:260] if raw_prompt is not None else ""
+        setattr(s, "interaction_prompt", prompt or None)
+
+        raw_exp = getattr(s, "interaction_explanation", None)
+        exp = str(raw_exp).strip()[:420] if raw_exp is not None else ""
+        setattr(s, "interaction_explanation", exp or None)
+
+        raw_idx = getattr(s, "interaction_correct_index", None)
+        idx: Optional[int] = None
+        if isinstance(raw_idx, int) and opts:
+            idx = max(0, min(len(opts) - 1, raw_idx))
+        setattr(s, "interaction_correct_index", idx)
 
 
 def _inject_bookend_slides(config: GenerationConfig, slides: List[SlideContent]) -> List[SlideContent]:
@@ -368,6 +404,7 @@ def generate_video(
     slides = planner.plan_slides(config)
     slides = _inject_module_quiz_slides(config, slides)
     slides = _inject_bookend_slides(config, slides)
+    _sanitize_premium_interactions(slides)
 
     images_dir = os.path.join(output_dir, "assets", "images")
     image_gen = ImageGenerator(api_key=together_api_key, model=config.image_model, output_dir=images_dir)

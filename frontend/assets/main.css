@@ -139,6 +139,20 @@ h1.page-title {
 .progress-sub {
   margin: -8px 0 16px;
 }
+.engine-mode-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(250, 250, 250, 0.85);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  vertical-align: middle;
+}
 label.field-label {
   display: block;
   font-size: 11px;

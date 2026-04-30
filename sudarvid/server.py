@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
@@ -34,8 +34,9 @@ from .media import (
     synthesize_tts_preview_file,
 )
 from .naming import allocate_job_folder_name
+from .sprite_lessons import list_sprite_templates, list_sprite_themes, render_sprite_lesson_html
 from .themes import list_themes
-from .types import AnimationLevel, GenerationConfig, ThemeId, VideoSize
+from .types import AnimationLevel, EngineMode, GenerationConfig, ThemeId, VideoSize
 
 
 app = FastAPI(
@@ -90,6 +91,7 @@ DB_PATH = REPO_ROOT / "sudarvid.db"
 
 
 job_events: Dict[str, asyncio.Queue] = {}
+job_meta: Dict[str, dict] = {}
 
 
 def _utc_now_iso() -> str:
@@ -379,6 +381,10 @@ class GenerateRequest(BaseModel):
         max_length=120,
         description="Optional Together image model override. Empty/omitted means server auto/default.",
     )
+    engine_mode: str = Field(
+        "classic",
+        description="Generation pathway: classic (default) or premium (scaffolded planning mode).",
+    )
 
     @field_validator("theme")
     @classmethod
@@ -394,6 +400,14 @@ class GenerateRequest(BaseModel):
         valid = ["subtle", "medium", "dynamic"]
         if v not in valid:
             raise ValueError(f"Invalid animation_level '{v}'. Choose from: {valid}")
+        return v
+
+    @field_validator("engine_mode")
+    @classmethod
+    def validate_engine_mode(cls, v: str) -> str:
+        valid = [EngineMode.CLASSIC.value, EngineMode.PREMIUM.value]
+        if v not in valid:
+            raise ValueError(f"Invalid engine_mode '{v}'. Choose from: {valid}")
         return v
 
     @field_validator("image_model")
@@ -428,7 +442,30 @@ class GenerateRequest(BaseModel):
             voice_override=self.voice_override,
             target_duration_seconds=self.target_duration_seconds,
             image_model=self.image_model,
+            engine_mode=EngineMode(self.engine_mode),
         )
+
+
+class SpriteFactRequest(BaseModel):
+    year: str = Field("STEP", max_length=32)
+    cat: str = Field("PYTHON", max_length=42)
+    text: str = Field(..., min_length=3, max_length=420)
+
+
+class SpriteLessonRequest(BaseModel):
+    topic: str = Field("Introduction to Python", min_length=3, max_length=120)
+    objective: Optional[str] = Field(None, max_length=280)
+    score_label: str = Field("XP", max_length=16)
+    template_id: Optional[str] = Field(None, max_length=60)
+    theme_id: Optional[str] = Field(None, max_length=60)
+    topic_family: Optional[str] = Field(None, max_length=30)
+    sprite_mode: str = Field("auto", max_length=20, description="auto | library_only | ai_preferred")
+    motion_level: str = Field("medium", max_length=20, description="low | medium | high")
+    text_density: str = Field("balanced", max_length=20, description="compact | balanced | detailed")
+    facts: Optional[List[SpriteFactRequest]] = Field(
+        None,
+        description="Optional lesson cards; defaults to beginner Python set when omitted.",
+    )
 
 
 @app.get("/voices", summary="Languages and curated TTS voices for the creator UI")
@@ -506,6 +543,16 @@ async def generate(request: GenerateRequest, background_tasks: BackgroundTasks) 
     os.makedirs(output_dir, exist_ok=True)
 
     config = request.to_generation_config()
+    meta = {
+        "engine_mode": config.engine_mode.value,
+        "theme": config.theme.value,
+        "animation_level": config.animation_level.value,
+        "include_tts": config.include_tts,
+        "include_music": config.include_music,
+        "output_html": config.output_html,
+        "output_mp4": config.output_mp4,
+    }
+    job_meta[job_id] = meta
     _create_job(job_id, output_dir)
     _debug_log(
         hypothesis_id="H1_jobid_polling_format",
@@ -523,7 +570,7 @@ async def generate(request: GenerateRequest, background_tasks: BackgroundTasks) 
     )
     background_tasks.add_task(_run_job, job_id, config)
 
-    return {"job_id": job_id, "status": "queued"}
+    return {"job_id": job_id, "status": "queued", "meta": meta}
 
 
 @app.get("/jobs", summary="List recent jobs")
@@ -550,6 +597,53 @@ async def legacy_v_preview_redirect(job_id: str) -> RedirectResponse:
     return RedirectResponse(url=f"/preview/{job_id}")
 
 
+@app.get("/samples/python-intro-sprite", summary="Preview the Python sprite lesson sample")
+async def python_intro_sprite_sample() -> FileResponse:
+    sample_path = (REPO_ROOT / "samples" / "python_intro_sprite_lesson.html").resolve()
+    if not sample_path.is_file():
+        raise HTTPException(status_code=404, detail="Sample lesson file not found.")
+    return FileResponse(path=str(sample_path), media_type="text/html")
+
+
+@app.post("/generate-sprite-lesson", summary="Generate reusable sprite lesson HTML")
+async def generate_sprite_lesson(request: SpriteLessonRequest) -> HTMLResponse:
+    facts = [f.model_dump() for f in request.facts] if request.facts else None
+    html = render_sprite_lesson_html(
+        topic=request.topic,
+        objective=request.objective,
+        facts=facts,
+        score_label=request.score_label,
+        template_id=request.template_id,
+        theme_id=request.theme_id,
+        topic_family=request.topic_family,
+        sprite_mode=request.sprite_mode,  # type: ignore[arg-type]
+        motion_level=request.motion_level,  # type: ignore[arg-type]
+        text_density=request.text_density,  # type: ignore[arg-type]
+    )
+    return HTMLResponse(content=html, media_type="text/html")
+
+
+@app.get("/sprite/templates", summary="List available sprite lesson templates")
+async def get_sprite_templates() -> List[dict]:
+    return list_sprite_templates()
+
+
+@app.get("/sprite/themes", summary="List available sprite lesson themes")
+async def get_sprite_themes() -> List[dict]:
+    return list_sprite_themes()
+
+
+@app.get("/samples/sprite-template/{template_id}", summary="Preview a specific sprite lesson template")
+async def preview_sprite_template(template_id: str, topic: str = "Introduction to Python") -> HTMLResponse:
+    html = render_sprite_lesson_html(
+        topic=topic,
+        objective="Preview how this template teaches the selected topic in a clear, beginner-friendly way.",
+        template_id=template_id,
+        score_label="XP",
+    )
+    return HTMLResponse(content=html, media_type="text/html")
+
+
 @app.get("/status/{job_id}", summary="Check job status")
 async def get_status(job_id: str) -> dict:
     job = _get_job(job_id)
@@ -566,6 +660,7 @@ async def get_status(job_id: str) -> dict:
         "status": job["status"],
         "output_files": job["output_files"],
         "error": job["error"],
+        "meta": job_meta.get(job_id, {}),
     }
 
 
@@ -608,6 +703,7 @@ async def stream_status(job_id: str) -> EventSourceResponse:
                             "status": job["status"],
                             "error": job["error"],
                             "output_files": job["output_files"],
+                            "meta": job_meta.get(job_id, {}),
                         }
                     ),
                 }

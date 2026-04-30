@@ -450,6 +450,38 @@ Formatting:
 - Return JSON only. No markdown.
 """.strip()
 
+PREMIUM_CONTENT_PLANNER_SYSTEM_PROMPT = """
+You are the premium course planning engine for SudarVid.
+
+Goal:
+- Produce a coherent, learning-first mini-course with strong chapter flow and concept-specific visuals.
+- Keep the same strict JSON schema as classic mode so downstream parsing remains compatible.
+- Prioritize meaningful learning over decorative text.
+
+Premium quality requirements:
+- Every slide should map to one concrete learning outcome.
+- Across the deck, vary instructional intent: hook, concept explainers, applied reasoning, and a challenge.
+- Keep narration concise and teacherly (2-4 sentences), with causal explanations and examples where useful.
+- Use visual_template intentionally (avoid overusing one template).
+- If a persona is provided, preserve that voice consistently while still teaching clearly.
+- Include meaningful interactions:
+  - Add at least one formative interaction in the first 70% of slides.
+  - Add one stronger challenge interaction near the end.
+  - Interactions must test application, not only recall.
+
+Compatibility constraints:
+- Return strictly valid JSON in this exact schema: {"slides":[...]}.
+- Required fields per slide remain the classic fields.
+- Optional premium fields per slide:
+  - "interaction_type": "none | reflect | decision | checkpoint"
+  - "interaction_prompt": "string"
+  - "interaction_options": ["string", ...] (2-4 options)
+  - "interaction_correct_index": number or empty
+  - "interaction_explanation": "string"
+- For non-interactive slides, set interaction_type to "none" and leave other interaction fields empty.
+- No markdown, no prose wrapper, no extra keys outside the schema.
+""".strip()
+
 
 CONTENT_EXTENDER_SYSTEM_PROMPT = """
 You extend an existing SudarVid teaching deck. The learner already saw the slides listed in the user message.
@@ -517,6 +549,17 @@ def _parse_slide_dict(idx: int, s: Any, allowed_layouts: frozenset) -> SlideCont
     bullets = [str(b).strip() for b in raw_bullets if b is not None and str(b).strip()]
     raw_vt = str(s.get("visual_template", "") or "").strip().lower()
     visual_template = raw_vt if raw_vt in VISUAL_TEMPLATES else _default_visual_template(layout)
+    interaction_type = str(s.get("interaction_type", "none") or "none").strip().lower()
+    if interaction_type not in {"none", "reflect", "decision", "checkpoint"}:
+        interaction_type = "none"
+    raw_opts = s.get("interaction_options") or []
+    if not isinstance(raw_opts, list):
+        raw_opts = []
+    interaction_options = [str(o).strip() for o in raw_opts if str(o).strip()][:4]
+    raw_correct = s.get("interaction_correct_index")
+    correct_idx: Optional[int] = None
+    if isinstance(raw_correct, int):
+        correct_idx = max(0, min(len(interaction_options) - 1, raw_correct)) if interaction_options else None
     return SlideContent(
         index=idx,
         title=str(s.get("title", "")).strip(),
@@ -529,6 +572,11 @@ def _parse_slide_dict(idx: int, s: Any, allowed_layouts: frozenset) -> SlideCont
         learning_point=(str(s.get("learning_point", "")).strip() or None),
         big_stat=(str(s.get("big_stat", "")).strip() or None),
         stat_caption=(str(s.get("stat_caption", "")).strip() or None),
+        interaction_type=interaction_type,
+        interaction_prompt=(str(s.get("interaction_prompt", "")).strip() or None),
+        interaction_options=interaction_options or None,
+        interaction_correct_index=correct_idx,
+        interaction_explanation=(str(s.get("interaction_explanation", "")).strip() or None),
     )
 
 
@@ -653,7 +701,19 @@ summary, or next subtopic). Return JSON with a "slides" array.
         user_prompt = build_content_planner_user_prompt(config)
 
         temp = 0.7 if (config.persona or "").strip() else 0.4
-        data = self._chat_json(CONTENT_PLANNER_SYSTEM_PROMPT, user_prompt, temperature=temp)
+        system_prompt = CONTENT_PLANNER_SYSTEM_PROMPT
+        if getattr(config, "engine_mode", None) is not None and config.engine_mode.value == "premium":
+            system_prompt = PREMIUM_CONTENT_PLANNER_SYSTEM_PROMPT
+            user_prompt = (
+                user_prompt
+                + "\n\nPremium mode notes:\n"
+                  "- Treat this as a mini-course, not a disconnected slide list.\n"
+                  "- Ensure progression from setup -> explanation -> application -> challenge.\n"
+                  "- Prefer concept-specific metaphors in image_prompt over generic abstractions.\n"
+                  "- Add interaction_type/interaction_prompt/interaction_options on selected slides.\n"
+                  "- For interaction slides, provide interaction_explanation and correct index when applicable.\n"
+            )
+        data = self._chat_json(system_prompt, user_prompt, temperature=temp)
         slides_data = _extract_slides_payload(data)
 
         allowed_layouts = frozenset(

@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="{{ language }}">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sudar Premium - {{ slides[0].title if slides else "Course" }}</title>
+  {% if theme.google_fonts_url %}
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="{{ theme.google_fonts_url }}" rel="stylesheet" />
+  {% endif %}
+  <style>
+    :root {
+      --bg: {{ theme.bg_color }};
+      --panel: color-mix(in srgb, {{ theme.bg_color }} 86%, #000 14%);
+      --ink: {{ theme.text_color }};
+      --muted: color-mix(in srgb, {{ theme.text_color }} 62%, #7a7a7a 38%);
+      --accent: {{ theme.accent_color }};
+      --accent2: {{ theme.secondary_accent }};
+      --line: color-mix(in srgb, {{ theme.text_color }} 16%, transparent);
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      background: radial-gradient(circle at 84% 8%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 42%), var(--bg);
+      color: var(--ink);
+      font-family: {{ theme.font_body | safe }};
+    }
+    #deck {
+      width: {{ width }}px;
+      height: {{ height }}px;
+      margin: 0 auto;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--panel);
+    }
+    .topbar {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 56px;
+      border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 18px;
+      background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent);
+      z-index: 10;
+    }
+    .brand { font-family: {{ theme.font_heading | safe }}; font-weight: 700; font-size: 14px; letter-spacing: .04em; }
+    .mode { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+    .viewport {
+      position: absolute; inset: 56px 0 86px 0;
+      overflow: hidden;
+    }
+    .scene {
+      position: absolute; inset: 0;
+      display: grid; grid-template-columns: 0.9fr 1.1fr;
+      gap: 26px; align-items: center;
+      padding: 28px 32px;
+      opacity: 0; transform: translateY(14px) scale(.988);
+      transition: opacity .45s ease, transform .45s ease;
+      pointer-events: none;
+    }
+    .scene.active { opacity: 1; transform: none; pointer-events: auto; }
+    .kicker {
+      font-size: 11px; letter-spacing: .18em; text-transform: uppercase; font-weight: 700; color: var(--accent);
+      margin-bottom: 10px;
+    }
+    .title {
+      font-family: {{ theme.font_heading | safe }};
+      margin: 0; font-weight: 800; line-height: 1.02; letter-spacing: -.03em;
+      font-size: clamp(30px, 4.4vw, 58px);
+      color: var(--ink);
+    }
+    .subtitle { margin-top: 10px; font-size: 18px; color: var(--accent); font-family: {{ theme.font_heading | safe }}; }
+    .body { margin-top: 14px; color: var(--muted); line-height: 1.62; font-size: 15px; max-width: 560px; }
+    .bullets { margin-top: 14px; display: grid; gap: 8px; }
+    .bullet {
+      border: 1px solid var(--line); background: color-mix(in srgb, var(--ink) 5%, transparent);
+      border-radius: 10px; padding: 10px 12px; font-size: 13px; color: var(--ink);
+    }
+    .visual {
+      position: relative; min-height: 350px;
+      border: 1px solid var(--line); border-radius: 16px;
+      background: color-mix(in srgb, var(--ink) 3%, transparent);
+      overflow: hidden;
+    }
+    .visual.has-image img {
+      position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+      opacity: .35;
+    }
+    .overlay {
+      position: absolute; inset: 0;
+      background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent 55%);
+    }
+    .stat {
+      position: absolute; right: 16px; top: 12px;
+      font-size: 38px; font-weight: 800; letter-spacing: -.03em; color: var(--accent);
+      font-family: {{ theme.font_heading | safe }};
+    }
+    .caption {
+      position: absolute; left: 14px; right: 14px; bottom: 12px;
+      border: 1px solid var(--line); border-radius: 10px;
+      padding: 8px 10px; font-size: 12px;
+      background: color-mix(in srgb, #000 20%, transparent); color: var(--muted);
+    }
+    .quiz-panel {
+      position: absolute; inset: 14px;
+      border: 1px solid var(--line); border-radius: 12px;
+      padding: 14px; background: color-mix(in srgb, var(--ink) 4%, transparent);
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .quiz-opt {
+      width: 100%; text-align: left;
+      border-radius: 10px; border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--ink);
+      padding: 9px 10px; cursor: pointer; font-size: 13px;
+    }
+    .quiz-opt.correct { border-color: #4ade80; background: rgba(74,222,128,.12); }
+    .quiz-opt.wrong { border-color: #fb7185; background: rgba(251,113,133,.12); }
+    .quiz-fb { min-height: 18px; color: var(--muted); font-size: 12px; }
+    .concept-wrap {
+      position: absolute; inset: 14px;
+      border: 1px solid var(--line); border-radius: 12px;
+      background: color-mix(in srgb, var(--ink) 4%, transparent);
+      padding: 12px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .concept-head { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
+    .step-flow { display: grid; grid-template-columns: 1fr; gap: 7px; }
+    .step-item {
+      border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font-size: 12px;
+      background: color-mix(in srgb, var(--ink) 5%, transparent);
+      opacity: var(--sop, .22); transform: translateX(var(--sx, 0px));
+      transition: opacity .45s ease, transform .45s ease;
+    }
+    .contrast-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .contrast-col {
+      border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: color-mix(in srgb, var(--ink) 4%, transparent);
+    }
+    .contrast-title { font-size: 11px; color: var(--accent); font-weight: 700; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .08em; }
+    .contrast-text { font-size: 12px; color: var(--ink); line-height: 1.45; }
+    .meter-track {
+      height: 10px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 14%, transparent); overflow: hidden;
+    }
+    .meter-fill {
+      height: 100%; width: var(--mw, 0%);
+      border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent2));
+      transition: width 1s cubic-bezier(.4,0,.2,1);
+    }
+    .concept-nodes {
+      position: relative; flex: 1; min-height: 150px;
+    }
+    .node {
+      position: absolute; padding: 6px 9px; border-radius: 999px; font-size: 11px; font-weight: 700;
+      border: 1px solid var(--line); background: color-mix(in srgb, var(--ink) 7%, transparent);
+      color: var(--ink); transform: scale(var(--ns, .8)); opacity: var(--no, .2);
+      transition: transform .4s ease, opacity .4s ease;
+    }
+    .interaction-panel {
+      position: absolute; left: 14px; right: 14px; bottom: 14px;
+      border: 1px solid var(--line); border-radius: 10px; padding: 8px;
+      background: color-mix(in srgb, #000 22%, transparent);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .interaction-prompt { font-size: 12px; color: var(--ink); font-weight: 700; line-height: 1.45; }
+    .interaction-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .i-opt {
+      border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--ink) 5%, transparent);
+      color: var(--ink); font-size: 11px; padding: 7px; cursor: pointer; text-align: left;
+    }
+    .i-opt.good { border-color: #4ade80; background: rgba(74,222,128,.12); }
+    .i-opt.bad { border-color: #fb7185; background: rgba(251,113,133,.12); }
+    .interaction-fb { min-height: 16px; color: var(--muted); font-size: 11px; }
+    .player {
+      position: absolute; left: 0; right: 0; bottom: 0; height: 86px;
+      border-top: 1px solid var(--line);
+      padding: 10px 16px;
+      background: color-mix(in srgb, #000 18%, transparent);
+      z-index: 10;
+    }
+    .controls { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
+    .btn {
+      border: 1px solid var(--line); background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink);
+      border-radius: 10px; padding: 8px 12px; font-size: 12px; cursor: pointer;
+    }
+    .timeline { position: relative; height: 10px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 14%, transparent); }
+    .fill { position: absolute; inset: 0 auto 0 0; width: 0%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+    .dot { position: absolute; top: 0; width: 2px; height: 100%; background: color-mix(in srgb, var(--ink) 58%, transparent); }
+    .thumb { position: absolute; top: 50%; left: 0%; width: 15px; height: 15px; border-radius: 50%; transform: translate(-50%, -50%); background: var(--accent); }
+    .pill {
+      position: absolute; bottom: calc(100% + 7px); left: 50%; transform: translateX(-50%);
+      font-size: 10px; font-weight: 700; letter-spacing: .03em;
+      background: var(--accent); color: var(--bg); padding: 3px 8px; border-radius: 6px;
+      white-space: nowrap;
+    }
+    .chapter-list { margin-top: 8px; display: flex; gap: 6px; overflow: auto; }
+    .chip {
+      border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px; font-size: 11px; color: var(--muted);
+      white-space: nowrap; cursor: pointer;
+    }
+    .chip.active { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+    .fit-wrap { width: 100%; height: 100%; display: grid; place-items: center; overflow: hidden; }
+    #deck-scale-inner { transform-origin: top left; will-change: transform; position: absolute; left: 0; top: 0; }
+    #deck-viewport { position: relative; overflow: hidden; }
+  </style>
+</head>
+<body data-animation-level="{{ animation_level }}">
+  <div class="fit-wrap" id="sudarvid-deck-stage">
+    <div id="deck-viewport">
+      <div id="deck-scale-inner">
+        <main id="deck">
+          <header class="topbar">
+            <div class="brand">Sudar Premium Course</div>
+            <div class="mode">{{ theme.label }} · {{ engine_mode }}</div>
+          </header>
+          <section class="viewport">
+            {% for slide in slides %}
+            <article class="scene{% if loop.first %} active{% endif %}" data-index="{{ loop.index0 }}">
+              <div>
+                <div class="kicker">Chapter {{ "%02d"|format(loop.index) }} / {{ slide.layout_kind|replace("_"," ")|title }}</div>
+                <h1 class="title">{{ slide.title }}</h1>
+                {% if slide.subtitle %}<div class="subtitle">{{ slide.subtitle }}</div>{% endif %}
+                <p class="body">{{ slide.learning_point or slide.narration or "" }}</p>
+                {% if slide.bullets %}
+                <div class="bullets">
+                  {% for b in slide.bullets[:4] %}
+                  <div class="bullet">{{ b }}</div>
+                  {% endfor %}
+                </div>
+                {% endif %}
+              </div>
+              <div class="visual{% if slide.image_path %} has-image{% endif %}">
+                {% if slide.image_path %}<img src="{{ slide.image_path }}" alt="" />{% endif %}
+                <div class="overlay"></div>
+                {% if slide.layout_kind == "steps" %}
+                <div class="concept-wrap">
+                  <div class="concept-head">Process Flow</div>
+                  <div class="step-flow">
+                    {% for b in slide.bullets[:4] %}
+                    <div class="step-item" data-step-idx="{{ loop.index0 }}">{{ loop.index }}. {{ b }}</div>
+                    {% endfor %}
+                  </div>
+                </div>
+                {% elif slide.layout_kind == "contrast" and (slide.bullets|length) >= 4 %}
+                <div class="concept-wrap">
+                  <div class="concept-head">Contrast View</div>
+                  <div class="contrast-grid">
+                    <div class="contrast-col">
+                      <div class="contrast-title">{{ slide.bullets[0] }}</div>
+                      <div class="contrast-text">{{ slide.bullets[1] }}</div>
+                    </div>
+                    <div class="contrast-col">
+                      <div class="contrast-title">{{ slide.bullets[2] }}</div>
+                      <div class="contrast-text">{{ slide.bullets[3] }}</div>
+                    </div>
+                  </div>
+                </div>
+                {% elif slide.layout_kind == "stat_focus" %}
+                <div class="concept-wrap">
+                  <div class="concept-head">Signal Meter</div>
+                  <div style="font-size:12px;color:var(--muted);">{{ slide.stat_caption or slide.learning_point or "Core signal strength" }}</div>
+                  <div class="meter-track"><div class="meter-fill" data-meter="{{ loop.index0 }}"></div></div>
+                </div>
+                {% elif slide.layout_kind != "quiz" %}
+                <div class="concept-wrap">
+                  <div class="concept-head">Concept Map</div>
+                  <div class="concept-nodes" data-nodes="{{ loop.index0 }}">
+                    <span class="node" style="left:8%;top:16%">Core</span>
+                    <span class="node" style="left:58%;top:12%">Cause</span>
+                    <span class="node" style="left:22%;top:58%">Effect</span>
+                    <span class="node" style="left:64%;top:64%">Decision</span>
+                  </div>
+                </div>
+                {% endif %}
+                {% if slide.big_stat %}<div class="stat">{{ slide.big_stat }}</div>{% endif %}
+                {% if slide.layout_kind == "quiz" %}
+                <div class="quiz-panel" data-q="{{ loop.index0 }}">
+                  {% set qindex = loop.index0 %}
+                  <div style="font-size:13px;font-weight:700;color:var(--ink);">{{ slide.subtitle or "Quick Checkpoint" }}</div>
+                  {% for b in slide.bullets %}
+                  <button class="quiz-opt" data-q="{{ qindex }}" data-i="{{ loop.index0 }}">{{ b }}</button>
+                  {% endfor %}
+                  <div class="quiz-fb" id="qfb-{{ qindex }}"></div>
+                </div>
+                {% endif %}
+                {% if slide.interaction_type and slide.interaction_type != "none" and slide.interaction_options and (slide.interaction_options|length) >= 2 %}
+                <div class="interaction-panel" data-i="{{ loop.index0 }}">
+                  <div class="interaction-prompt">{{ slide.interaction_prompt or "Choose the best next move." }}</div>
+                  <div class="interaction-opts">
+                    {% set iindex = loop.index0 %}
+                    {% for opt in slide.interaction_options[:4] %}
+                    <button class="i-opt" data-iq="{{ iindex }}" data-ii="{{ loop.index0 }}">{{ opt }}</button>
+                    {% endfor %}
+                  </div>
+                  <div class="interaction-fb" id="ifb-{{ iindex }}"></div>
+                </div>
+                {% endif %}
+                {% if slide.stat_caption %}
+                <div class="caption">{{ slide.stat_caption }}</div>
+                {% elif slide.narration %}
+                <div class="caption">{{ slide.narration }}</div>
+                {% endif %}
+              </div>
+            </article>
+            {% endfor %}
+          </section>
+          <footer class="player">
+            <div class="controls">
+              <button class="btn" id="playBtn">Pause</button>
+              <div class="timeline" id="timeline">
+                <div class="fill" id="fill"></div>
+                {% set ns = namespace(acc=0.0) %}
+                {% for s in slides %}
+                  <span class="dot" style="left: {{ (ns.acc / (slides|sum(attribute='duration_seconds') or 1)) * 100 }}%"></span>
+                  {% set ns.acc = ns.acc + (s.duration_seconds or 6.0) %}
+                {% endfor %}
+                <div class="thumb" id="thumb"><div class="pill" id="pill">0:00 / 0:00</div></div>
+              </div>
+              <button class="btn" id="restartBtn">Restart</button>
+            </div>
+            <div class="chapter-list" id="chapterList">
+              {% for slide in slides %}
+              <button class="chip{% if loop.first %} active{% endif %}" data-jump="{{ loop.index0 }}">Ch {{ loop.index }}</button>
+              {% endfor %}
+            </div>
+          </footer>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  {% if include_tts %}
+  <audio id="voice" src="audio/voiceover.mp3" preload="auto"></audio>
+  {% endif %}
+
+  <script>
+    window.SUDARVID_SLIDES = [
+      {% for s in slides %}
+      {
+        index: {{ s.index }},
+        title: {{ s.title|tojson }},
+        duration_seconds: {{ (s.duration_seconds or 6.0)|float }},
+        quiz_correct_index: {{ (s.quiz_correct_index if s.quiz_correct_index is defined else -1) }},
+        quiz_explanation: {{ (s.quiz_explanation if s.quiz_explanation is defined else "")|tojson }},
+        layout_kind: {{ s.layout_kind|tojson }},
+        bullets: {{ s.bullets|tojson }},
+        learning_point: {{ (s.learning_point or "")|tojson }},
+        interaction_type: {{ (s.interaction_type if s.interaction_type is defined and s.interaction_type else "none")|tojson }},
+        interaction_prompt: {{ (s.interaction_prompt if s.interaction_prompt is defined else "")|tojson }},
+        interaction_options: {{ (s.interaction_options if s.interaction_options is defined and s.interaction_options else [])|tojson }},
+        interaction_correct_index: {{ (s.interaction_correct_index if s.interaction_correct_index is defined and s.interaction_correct_index is not none else -1) }},
+        interaction_explanation: {{ (s.interaction_explanation if s.interaction_explanation is defined else "")|tojson }}
+      }{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ];
+    (function () {
+      const scenes = [...document.querySelectorAll(".scene")];
+      const chips = [...document.querySelectorAll(".chip")];
+      const slides = window.SUDARVID_SLIDES || [];
+      const total = slides.reduce((a, s) => a + (s.duration_seconds || 6), 0) || 1;
+      const fill = document.getElementById("fill");
+      const thumb = document.getElementById("thumb");
+      const pill = document.getElementById("pill");
+      const timeline = document.getElementById("timeline");
+      const playBtn = document.getElementById("playBtn");
+      const restartBtn = document.getElementById("restartBtn");
+      const audio = document.getElementById("voice");
+      let t = 0, scene = 0, playing = true, last = performance.now();
+
+      function fmt(v) {
+        v = Math.floor(Math.max(0, v));
+        return Math.floor(v / 60) + ":" + String(v % 60).padStart(2, "0");
+      }
+      function sceneFor(sec) {
+        let acc = 0;
+        for (let i = 0; i < slides.length; i++) {
+          const d = slides[i].duration_seconds || 6;
+          if (sec < acc + d || i === slides.length - 1) return i;
+          acc += d;
+        }
+        return 0;
+      }
+      function sceneStart(idx) {
+        let acc = 0;
+        for (let i = 0; i < idx; i++) acc += slides[i].duration_seconds || 6;
+        return acc;
+      }
+      function setScene(i) {
+        scene = Math.max(0, Math.min(slides.length - 1, i));
+        scenes.forEach((s, idx) => s.classList.toggle("active", idx === scene));
+        chips.forEach((c, idx) => c.classList.toggle("active", idx === scene));
+        animateSceneVisual(scene);
+      }
+      function animateSceneVisual(idx) {
+        const sceneEl = scenes[idx];
+        if (!sceneEl) return;
+        sceneEl.querySelectorAll(".step-item").forEach((el, i) => {
+          el.style.setProperty("--sop", "1");
+          el.style.setProperty("--sx", "0px");
+          el.style.transitionDelay = `${i * 110}ms`;
+        });
+        sceneEl.querySelectorAll(".node").forEach((el, i) => {
+          if (typeof el.getAnimations === "function") {
+            el.getAnimations().forEach((a) => a.cancel());
+          }
+          el.style.setProperty("--ns", "1");
+          el.style.setProperty("--no", "1");
+          el.style.transitionDelay = `${i * 90}ms`;
+          const x = (i % 2 === 0 ? -1 : 1) * (4 + i * 2);
+          const y = (i % 2 === 0 ? 1 : -1) * (3 + i);
+          el.animate([{ transform: "translate(0px,0px)" }, { transform: `translate(${x}px,${y}px)` }, { transform: "translate(0px,0px)" }], { duration: 2600 + i * 300, iterations: Infinity, easing: "ease-in-out" });
+        });
+        sceneEl.querySelectorAll(".meter-fill").forEach((el) => {
+          const meta = slides[idx] || {};
+          const len = (meta.bullets || []).join(" ").length + (meta.learning_point || "").length;
+          const val = Math.max(30, Math.min(92, 35 + (len % 58)));
+          el.style.setProperty("--mw", val + "%");
+        });
+      }
+      function render() {
+        t = Math.max(0, Math.min(total, t));
+        const s = sceneFor(t);
+        if (s !== scene) setScene(s);
+        const pct = (t / total) * 100;
+        fill.style.width = pct + "%";
+        thumb.style.left = pct + "%";
+        pill.textContent = fmt(t) + " / " + fmt(total);
+      }
+      function showSlide(idx) {
+        const start = sceneStart(Math.max(0, Math.min(slides.length - 1, idx)));
+        t = start;
+        setScene(idx);
+        render();
+      }
+      function play() {
+        playing = true;
+        playBtn.textContent = "Pause";
+        if (audio && !window.IS_CAPTURE) audio.play().catch(() => {});
+      }
+      function pause() {
+        playing = false;
+        playBtn.textContent = "Play";
+        if (audio) audio.pause();
+      }
+      function loop(now) {
+        const dt = (now - last) / 1000;
+        last = now;
+        if (playing) {
+          if (audio && !window.IS_CAPTURE && !audio.paused) {
+            t = audio.currentTime;
+          } else {
+            t += dt;
+          }
+          if (t >= total) {
+            t = total;
+            pause();
+          }
+          render();
+        }
+        requestAnimationFrame(loop);
+      }
+      chips.forEach((chip) => chip.onclick = () => showSlide(Number(chip.dataset.jump || 0)));
+      timeline.onclick = (e) => {
+        const r = timeline.getBoundingClientRect();
+        const p = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+        t = p * total;
+        if (audio && !window.IS_CAPTURE) audio.currentTime = t;
+        render();
+      };
+      playBtn.onclick = () => (playing ? pause() : play());
+      restartBtn.onclick = () => {
+        t = 0;
+        if (audio && !window.IS_CAPTURE) audio.currentTime = 0;
+        setScene(0);
+        render();
+        play();
+      };
+      document.querySelectorAll(".quiz-opt").forEach((btn) => {
+        btn.onclick = () => {
+          const q = Number(btn.dataset.q);
+          const i = Number(btn.dataset.i);
+          const meta = slides[q] || {};
+          const correct = Number(meta.quiz_correct_index ?? -1);
+          document.querySelectorAll(`.quiz-opt[data-q="${q}"]`).forEach((b) => b.classList.remove("correct", "wrong"));
+          btn.classList.add(i === correct ? "correct" : "wrong");
+          const fb = document.getElementById(`qfb-${q}`);
+          if (fb) fb.textContent = i === correct
+            ? (meta.quiz_explanation || "Correct.")
+            : ("Try again. " + (meta.quiz_explanation || ""));
+        };
+      });
+      document.querySelectorAll(".i-opt").forEach((btn) => {
+        btn.onclick = () => {
+          const q = Number(btn.dataset.iq);
+          const i = Number(btn.dataset.ii);
+          const meta = slides[q] || {};
+          const correct = Number(meta.interaction_correct_index ?? -1);
+          document.querySelectorAll(`.i-opt[data-iq="${q}"]`).forEach((b) => b.classList.remove("good", "bad"));
+          const good = correct >= 0 ? i === correct : i === 0;
+          btn.classList.add(good ? "good" : "bad");
+          const fb = document.getElementById(`ifb-${q}`);
+          if (fb) {
+            fb.textContent = good
+              ? (meta.interaction_explanation || "Strong choice. Keep applying this logic.")
+              : ("Try again. " + (meta.interaction_explanation || "Use the concept from this chapter."));
+          }
+        };
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.code === "Space" && e.target.tagName !== "BUTTON") { e.preventDefault(); playing ? pause() : play(); }
+        if (e.code === "ArrowRight") showSlide(Math.min(slides.length - 1, scene + 1));
+        if (e.code === "ArrowLeft") showSlide(Math.max(0, scene - 1));
+      });
+
+      window.SudarVid = {
+        showSlide: function (index) {
+          showSlide(index);
+          if (window.IS_CAPTURE) {
+            pause();
+          }
+        },
+      };
+      setScene(0);
+      render();
+      if (audio && !window.IS_CAPTURE) {
+        audio.addEventListener("loadedmetadata", () => {
+          // keep html timeline aligned with actual track when available
+          if (audio.duration && Number.isFinite(audio.duration)) {
+            // keep visuals based on audio clock after play starts
+          }
+        });
+      }
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>
